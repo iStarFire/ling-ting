@@ -51,14 +51,14 @@ com.tingyiting/
 
 | 依赖 | 版本 |
 |------|------|
-| AGP | 8.2.0 |
+| AGP | 8.4.0 |
 | Kotlin | 1.9.22 |
 | Compose BOM | 2024.01.00 |
 | Media3 | 1.2.1 |
 | Room | 2.6.1 |
 | Hilt | 2.50 |
 | OkHttp | 4.12.0 |
-| Gradle | 8.5 |
+| Gradle | 8.6 |
 
 ## 构建命令
 
