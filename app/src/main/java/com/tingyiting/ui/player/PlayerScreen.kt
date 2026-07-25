@@ -100,7 +100,7 @@ fun PlayerScreen(
                             textAlign = TextAlign.Center,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = if (isLandscape) 0 else 16.dp)
+                            modifier = Modifier.padding(top = if (isLandscape) 0.dp else 16.dp)
                         )
 
                         // 进度条

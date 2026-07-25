@@ -15,9 +15,8 @@ class AuthDataSourceFactory(
         .build()
 
     override fun createDataSource(): DataSource {
-        return OkHttpDataSource.Builder(okHttpClient)
-            .addRequestHeader("Authorization", authHeader)
-            .setAllowChunkedEncoding(true)
-            .build()
+        return OkHttpDataSource.Factory(okHttpClient)
+            .setDefaultRequestProperties(mapOf("Authorization" to authHeader))
+            .createDataSource()
     }
 }

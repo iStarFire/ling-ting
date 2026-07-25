@@ -132,13 +132,14 @@ private fun BookCard(
                     )
                 }
                 if (book.duration > 0) {
+                    val progressVal = book.position.toFloat() / book.duration.coerceAtLeast(1).toFloat()
                     val progress = if (book.duration > 0) {
                         (book.position.toFloat() / book.duration * 100).toInt()
                     } else 0
 
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
-                        progress = { book.position.toFloat() / book.duration.coerceAtLeast(1).toFloat() },
+                        progress = progressVal,
                         modifier = Modifier.fillMaxWidth(),
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )

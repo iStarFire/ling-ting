@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.ExoPlayer
 import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.WebDavRepository
@@ -76,8 +77,7 @@ class PlayerViewModel @Inject constructor(
                 .build()
 
             player.apply {
-                setDataSourceFactory(dataSourceFactory)
-                setMediaItem(mediaItem)
+                setMediaSource(DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem))
                 seekTo(book.position)
                 prepare()
                 play()
