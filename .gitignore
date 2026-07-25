@@ -1,0 +1,18 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+/app/build
+/app/release
+*.apk
+*.aab
+*.jks
+*.keystore
+*.hprof
+# gradle wrapper jar is tracked, but local.properties is not
+
