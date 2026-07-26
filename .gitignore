@@ -1,5 +1,6 @@
 *.iml
 .gradle
+.codebuddy/plans
 /local.properties
 /.idea
 .DS_Store

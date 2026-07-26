@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 108 108">
+  <defs>
+    <linearGradient id="night" x1="54" y1="0" x2="54" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B241C"/>
+      <stop offset="1" stop-color="#16100D"/>
+    </linearGradient>
+    <clipPath id="squircle">
+      <rect x="12" y="12" width="84" height="84" rx="20"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#squircle)">
+    <rect width="108" height="108" fill="url(#night)"/>
+    <path d="M30,58 A24,24 0 0,1 78,58" stroke="#E8845E" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M34,58 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0 z" fill="#FFC97E"/>
+    <path d="M24.5,60 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 z" fill="#E8845E"/>
+    <path d="M72.5,60 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 z" fill="#E8845E"/>
+    <path d="M45,58 Q48.5,61.5 52,58" stroke="#7A3B22" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+    <path d="M56,58 Q59.5,61.5 63,58" stroke="#7A3B22" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+    <path d="M51,66 Q54,68.5 57,66" stroke="#7A3B22" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M34,25.5 Q35,29.5 39.5,31 Q35,32.5 34,36.5 Q33,32.5 28.5,31 Q33,29.5 34,25.5 Z" fill="#FFE3B3"/>
+    <path d="M73,25.5 Q73.6,28.2 76.5,29 Q73.6,29.8 73,32.5 Q72.4,29.8 69.5,29 Q72.4,28.2 73,25.5 Z" fill="#FFE3B3"/>
+    <path d="M78.2,42 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0 z" fill="#FFE3B3"/>
+  </g>
+</svg>
