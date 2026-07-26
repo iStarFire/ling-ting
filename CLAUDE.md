@@ -25,14 +25,21 @@ com.tingyiting/
 ├── network/
 │   ├── WebDavClient.kt         # WebDAV 协议客户端
 │   └── AuthDataSourceFactory.kt # Media3 鉴权数据源
+├── playback/
+│   ├── AudioPlayer.kt          # 窄播放器接口（ISP/DIP，测试用 Fake 实现）
+│   ├── ExoAudioPlayer.kt       # ExoPlayer 适配器（Media3 类型不外泄）
+│   └── PlaybackState.kt        # 全局播放快照（书架实时进度）
 ├── service/
 │   └── PlaybackService.kt      # 后台播放 (MediaSessionService)
 ├── ui/
 │   ├── server/        # WebDAV 服务器配置页
 │   ├── browser/       # 网盘文件浏览页
-│   ├── bookshelf/     # 书架页
+│   ├── bookshelf/     # 书架页（含底部迷你播放条）
 │   ├── player/        # 播放器页
-│   └── navigation/    # 导航路由
+│   ├── accounts/      # 账号管理页
+│   ├── navigation/    # 导航路由
+│   ├── theme/         # 暖陶土主题（深色模式跟随系统）
+│   └── components/    # 共享组件（BookCover 书名首字封面）
 └── di/                # Hilt 依赖注入模块
 ```
 
