@@ -3,10 +3,48 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- 耳机头带：环绕月亮 -->
     <path
-        android:fillColor="#1565C0"
-        android:pathData="M0,0h108v108H0z" />
+        android:pathData="M30,58 A24,24 0 0,1 78,58"
+        android:strokeColor="#E8845E"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+    <!-- 金色圆月 -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,30 L40,78 L72,54 Z" />
+        android:fillColor="#FFC97E"
+        android:pathData="M34,58 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0 z" />
+    <!-- 左右耳罩 -->
+    <path
+        android:fillColor="#E8845E"
+        android:pathData="M24.5,60 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 z" />
+    <path
+        android:fillColor="#E8845E"
+        android:pathData="M72.5,60 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 z" />
+    <!-- 闭眼安睡 -->
+    <path
+        android:pathData="M45,58 Q48.5,61.5 52,58"
+        android:strokeColor="#7A3B22"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M56,58 Q59.5,61.5 63,58"
+        android:strokeColor="#7A3B22"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+    <!-- 浅浅微笑 -->
+    <path
+        android:pathData="M51,66 Q54,68.5 57,66"
+        android:strokeColor="#7A3B22"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+    <!-- 星光点缀 -->
+    <path
+        android:fillColor="#FFE3B3"
+        android:pathData="M34,25.5 Q35,29.5 39.5,31 Q35,32.5 34,36.5 Q33,32.5 28.5,31 Q33,29.5 34,25.5 Z" />
+    <path
+        android:fillColor="#FFE3B3"
+        android:pathData="M73,25.5 Q73.6,28.2 76.5,29 Q73.6,29.8 73,32.5 Q72.4,29.8 69.5,29 Q72.4,28.2 73,25.5 Z" />
+    <path
+        android:fillColor="#FFE3B3"
+        android:pathData="M78.2,42 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0 z" />
 </vector>

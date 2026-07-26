@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Android 13+ 主题图标：戴耳机的月亮剪影 -->
+    <path
+        android:pathData="M30,58 A24,24 0 0,1 78,58"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,58 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24.5,60 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M72.5,60 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,25.5 Q35,29.5 39.5,31 Q35,32.5 34,36.5 Q33,32.5 28.5,31 Q33,29.5 34,25.5 Z" />
+</vector>
