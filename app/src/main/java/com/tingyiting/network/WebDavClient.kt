@@ -31,7 +31,9 @@ class WebDavClient(
             .header("Depth", "0")
             .build()
         val response = client.newCall(request).execute()
-        require(response.isSuccessful) { "连接失败: ${response.code}" }
+        if (!response.isSuccessful) {
+            throw IllegalStateException("HTTP ${response.code} - 服务器返回错误，请检查 WebDAV 地址是否正确（Alist 需要 /dav 路径）")
+        }
     }
 
     /** 获取指定路径下的文件列表 */
@@ -52,7 +54,7 @@ class WebDavClient(
     }
 
     /** 获取授权 Header，供 Media3 DataSource 使用 */
-    fun getAuthHeader(): String = "Basic $credentials"
+    fun getAuthHeader(): String = credentials
 
     /** 构建完整的 WebDAV 文件 URL */
     fun buildFileUrl(filePath: String): String = buildUrl(filePath)
