@@ -132,6 +132,23 @@ class BrowserViewModelTest {
         assertNull(viewModel.uiState.value.importProgressFraction)
     }
 
+    @Test
+    fun reimportCurrentDirectory_entersModeAndRefreshes() = runTest {
+        viewModel.startReimport(1L, "/dav/drama")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.isReimportMode)
+        assertEquals(1L, viewModel.uiState.value.reimportBookId)
+
+        viewModel.reimportCurrentDirectory()
+        advanceUntilIdle()
+
+        assertEquals(1, bookRepo.reimportCalls)
+        assertTrue(viewModel.uiState.value.importDone)
+        assertFalse(viewModel.uiState.value.isImporting)
+        assertNull(viewModel.uiState.value.importError)
+    }
+
     private fun audio(name: String) = WebDavFile(name = name, path = "/x/$name", isDirectory = false)
 
     // ---- 测试替身 ----
@@ -163,16 +180,23 @@ class BrowserViewModelTest {
 
     private class FakeBookRepository : BookRepository(stubBookDao, stubTrackDao) {
         val addedTracks = mutableMapOf<String, List<Track>>()
+        var reimportCalls = 0
         private var nextId = 1L
 
         override suspend fun addBookWithTracks(
             title: String,
             author: String,
             rootPath: String,
-            tracks: List<Track>
+            tracks: List<Track>,
+            source: String
         ): Long {
             addedTracks[rootPath] = tracks
             return nextId++
+        }
+
+        override suspend fun reimportWebDav(bookId: Long, path: String): Result<Long> {
+            reimportCalls++
+            return Result.success(bookId)
         }
     }
 
@@ -185,6 +209,7 @@ class BrowserViewModelTest {
             override suspend fun insert(book: BookEntity): Long = 0L
             override suspend fun update(book: BookEntity) {}
             override suspend fun delete(book: BookEntity) {}
+            override suspend fun updateTitle(id: Long, title: String) {}
             override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {}
             override suspend fun updateCover(id: Long, coverUrl: String) {}
         }

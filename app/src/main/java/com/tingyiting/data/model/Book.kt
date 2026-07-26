@@ -1,5 +1,9 @@
 package com.tingyiting.data.model
 
+/** 书籍数据来源：来自 WebDAV 网盘，或本地存储导入。 */
+const val SOURCE_WEBDAV = "webdav"
+const val SOURCE_LOCAL = "local"
+
 data class Book(
     val id: Long = 0,
     val title: String,
@@ -7,6 +11,7 @@ data class Book(
     val coverUrl: String = "",
     val webdavUrl: String = "",
     val rootPath: String = "",
+    val source: String = SOURCE_WEBDAV,
     val currentTrackIndex: Int = 0,
     val duration: Long = 0,
     val position: Long = 0

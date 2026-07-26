@@ -26,11 +26,20 @@ import kotlinx.coroutines.launch
 fun BrowserScreen(
     onNavigateToBookshelf: () -> Unit,
     onNavigateToPlayer: (Long) -> Unit,
+    reimportBookId: Long? = null,
+    reimportPath: String? = null,
     viewModel: BrowserViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // 进入重新导入模式：定位到既有书籍路径
+    LaunchedEffect(reimportBookId) {
+        if (reimportBookId != null) {
+            viewModel.startReimport(reimportBookId, reimportPath ?: "")
+        }
+    }
 
     // 批量导入成功后跳回书架
     LaunchedEffect(state.importDone) {
@@ -54,10 +63,11 @@ fun BrowserScreen(
                 title = {
                     // 只显示当前文件夹名，完整路径噪音大
                     Text(
-                        text = if (state.selectedPaths.isNotEmpty())
-                            "已选择 ${state.selectedPaths.size} 个目录"
-                        else
-                            state.currentPath.trimEnd('/').substringAfterLast('/').ifEmpty { "网盘文件" },
+                        text = when {
+                            state.isReimportMode -> "重新导入"
+                            state.selectedPaths.isNotEmpty() -> "已选择 ${state.selectedPaths.size} 个目录"
+                            else -> state.currentPath.trimEnd('/').substringAfterLast('/').ifEmpty { "网盘文件" }
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -78,7 +88,15 @@ fun BrowserScreen(
                     }
                 },
                 actions = {
-                    if (state.selectedPaths.isEmpty()) {
+                    if (state.isReimportMode) {
+                        // 重新导入模式：以当前目录刷新既有书籍
+                        Button(
+                            onClick = { viewModel.reimportCurrentDirectory() },
+                            enabled = !state.isImporting
+                        ) {
+                            Text("重新导入")
+                        }
+                    } else if (state.selectedPaths.isEmpty()) {
                         // 非选择模式：仅提供"回到根目录"
                         if (state.currentPath != "/") {
                             IconButton(onClick = { viewModel.navigateToRoot() }) {
@@ -174,7 +192,7 @@ fun BrowserScreen(
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         // 长按多选不易被发现，列表顶部给出一次性提示
-                        if (!selecting && state.files.any { it.isDirectory }) {
+                        if (!selecting && !state.isReimportMode && state.files.any { it.isDirectory }) {
                             item(key = "hint") {
                                 Text(
                                     text = "提示：长按目录可多选批量导入",
@@ -207,7 +225,7 @@ fun BrowserScreen(
                                     }
                                 },
                                 onLongClick = {
-                                    if (file.isDirectory) viewModel.toggleSelection(file.path)
+                                    if (!state.isReimportMode && file.isDirectory) viewModel.toggleSelection(file.path)
                                 }
                             )
                         }

@@ -7,6 +7,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tingyiting.data.model.Book
+import com.tingyiting.data.model.SOURCE_LOCAL
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.WebDavRepository
@@ -91,6 +92,15 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
+    /** 修改书籍名称并保存到数据库。 */
+    fun renameBook(bookId: Long, title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            bookRepository.renameBook(bookId, trimmed)
+        }
+    }
+
     /** 迷你播放条的播放/暂停切换。 */
     fun togglePlayPause() {
         if (player.playWhenReady) player.pause() else player.play()
@@ -129,7 +139,8 @@ class BookshelfViewModel @Inject constructor(
             title = title,
             author = "",
             rootPath = treeUri.toString(),
-            tracks = tracks
+            tracks = tracks,
+            source = SOURCE_LOCAL
         )
     }
 

@@ -5,7 +5,10 @@ import com.tingyiting.data.local.dao.TrackDao
 import com.tingyiting.data.local.entity.BookEntity
 import com.tingyiting.data.local.entity.TrackEntity
 import com.tingyiting.data.model.Book
+import com.tingyiting.data.model.SOURCE_LOCAL
+import com.tingyiting.data.model.SOURCE_WEBDAV
 import com.tingyiting.data.model.Track
+import com.tingyiting.data.repository.WebDavRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -14,7 +17,8 @@ import javax.inject.Singleton
 @Singleton
 open class BookRepository @Inject constructor(
     private val bookDao: BookDao,
-    private val trackDao: TrackDao
+    private val trackDao: TrackDao,
+    private val webDavRepository: WebDavRepository? = null
 ) {
     fun getAllBooks(): Flow<List<Book>> = bookDao.getAllBooks().map { entities ->
         entities.map { it.toBook() }
@@ -37,6 +41,7 @@ open class BookRepository @Inject constructor(
                 author = author,
                 webdavUrl = webdavUrl,
                 coverUrl = coverUrl,
+                source = SOURCE_WEBDAV,
                 lastPlayedAt = System.currentTimeMillis()
             )
         )
@@ -50,7 +55,8 @@ open class BookRepository @Inject constructor(
         title: String,
         author: String,
         rootPath: String,
-        tracks: List<Track>
+        tracks: List<Track>,
+        source: String = SOURCE_WEBDAV
     ): Long {
         bookDao.getBookByRootPath(rootPath)?.let { return it.id }
 
@@ -59,6 +65,7 @@ open class BookRepository @Inject constructor(
                 title = title,
                 author = author,
                 rootPath = rootPath,
+                source = source,
                 currentTrackIndex = 0,
                 lastPlayedAt = System.currentTimeMillis()
             )
@@ -99,11 +106,52 @@ open class BookRepository @Inject constructor(
         }
     }
 
-    suspend fun deleteBook(id: Long) {
+    open suspend fun deleteBook(id: Long) {
         bookDao.getBookById(id)?.let {
             trackDao.deleteByBookId(id)
             bookDao.delete(it)
         }
+    }
+
+    /** 修改书籍名称并保存到数据库。 */
+    open suspend fun renameBook(bookId: Long, title: String) {
+        bookDao.getBookById(bookId) ?: return
+        bookDao.updateTitle(bookId, title)
+    }
+
+    /**
+     * 重新导入（仅 WebDAV 目录书籍）：按新路径刷新曲目索引，复用同一本书。
+     * 先删除旧曲目再写入新曲目，并同步根路径/名称/来源。
+     */
+    open suspend fun reimportWebDav(bookId: Long, path: String): Result<Long> = runCatching {
+        val repo = webDavRepository ?: throw IllegalStateException("WebDAV 未配置")
+        val files = repo.collectAudioFiles(path) { _, _, _ -> }.getOrElse { throw it }
+        if (files.isEmpty()) throw IllegalStateException("该目录下没有音频文件")
+        val dirName = path.trimEnd('/').substringAfterLast('/').ifBlank { "根目录" }
+        val entities = files.mapIndexed { index, f ->
+            TrackEntity(
+                bookId = bookId,
+                trackIndex = index,
+                title = f.name.substringBeforeLast(".").ifBlank { f.name },
+                webdavUrl = repo.buildFileUrl(f.path),
+                path = f.path
+            )
+        }
+        val existing = bookDao.getBookById(bookId) ?: throw IllegalStateException("书籍不存在")
+        trackDao.deleteByBookId(bookId)
+        trackDao.insertAll(entities)
+        bookDao.update(
+            existing.copy(
+                rootPath = path,
+                title = dirName,
+                source = SOURCE_WEBDAV,
+                currentTrackIndex = 0,
+                position = 0,
+                duration = 0,
+                lastPlayedAt = System.currentTimeMillis()
+            )
+        )
+        bookId
     }
 
     suspend fun updateProgress(id: Long, position: Long, duration: Long) {
@@ -121,6 +169,7 @@ open class BookRepository @Inject constructor(
         coverUrl = coverUrl,
         webdavUrl = webdavUrl,
         rootPath = rootPath,
+        source = source,
         currentTrackIndex = currentTrackIndex,
         duration = duration,
         position = position

@@ -387,16 +387,17 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(sleepTimerRemaining = null) }
     }
 
-    fun scrapeCoverFromDouban() {
+    fun scrapeCoverFromDouban(query: String = "") {
         val state = _uiState.value
         if (state.bookId == 0L || state.isCoverUpdating) return
         val repository = coverRepository ?: run {
             _uiState.update { it.copy(coverError = "封面服务不可用") }
             return
         }
+        val effectiveQuery = query.trim().ifBlank { state.title }
         _uiState.update { it.copy(isCoverUpdating = true, coverError = null) }
         viewModelScope.launch {
-            repository.scrapeFromDouban(state.bookId, state.title)
+            repository.scrapeFromDouban(state.bookId, effectiveQuery)
                 .onSuccess { coverUrl ->
                     activeBook = activeBook?.copy(coverUrl = coverUrl)
                     _uiState.update {

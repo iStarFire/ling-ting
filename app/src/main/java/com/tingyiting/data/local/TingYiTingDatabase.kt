@@ -9,7 +9,7 @@ import com.tingyiting.data.local.dao.TrackDao
 import com.tingyiting.data.local.entity.BookEntity
 import com.tingyiting.data.local.entity.TrackEntity
 
-@Database(entities = [BookEntity::class, TrackEntity::class], version = 3, exportSchema = false)
+@Database(entities = [BookEntity::class, TrackEntity::class], version = 4, exportSchema = false)
 abstract class TingYiTingDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun trackDao(): TrackDao
@@ -42,6 +42,13 @@ abstract class TingYiTingDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN rootPath TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE books ADD COLUMN currentTrackIndex INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // v3 -> v4：books 表新增 source 列（数据来源：webdav / local），默认 webdav
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN source TEXT NOT NULL DEFAULT 'webdav'")
             }
         }
     }

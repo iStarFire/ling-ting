@@ -56,6 +56,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
@@ -271,23 +272,43 @@ fun PlayerScreen(
 
     if (showCoverSheet) {
         ModalBottomSheet(onDismissRequest = { showCoverSheet = false }) {
+            var coverQuery by remember { mutableStateOf(state.title) }
             Text(
                 text = "编辑封面",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
             )
+            OutlinedTextField(
+                value = coverQuery,
+                onValueChange = { coverQuery = it },
+                label = { Text("搜刮关键词") },
+                placeholder = { Text(state.title) },
+                singleLine = true,
+                enabled = !state.isCoverUpdating,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                trailingIcon = {
+                    IconButton(
+                        onClick = { viewModel.scrapeCoverFromDouban(coverQuery) },
+                        enabled = !state.isCoverUpdating && coverQuery.isNotBlank()
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = "搜刮")
+                    }
+                }
+            )
             ListItem(
                 headlineContent = { Text("从豆瓣自动搜刮") },
                 supportingContent = {
                     Text(
-                        text = if (state.isCoverUpdating) "正在搜索并保存封面..." else "按书名搜索封面并保存到本地"
+                        text = if (state.isCoverUpdating) "正在搜索并保存封面..." else "使用上方关键词搜索封面并保存到本地"
                     )
                 },
                 leadingContent = {
                     Icon(Icons.Default.Search, contentDescription = null)
                 },
                 modifier = Modifier.clickable(enabled = !state.isCoverUpdating) {
-                    viewModel.scrapeCoverFromDouban()
+                    viewModel.scrapeCoverFromDouban(coverQuery)
                 }
             )
             ListItem(

@@ -3,6 +3,7 @@ package com.tingyiting.ui.player
 import com.tingyiting.data.model.Book
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
+import com.tingyiting.data.repository.CoverRepository
 import com.tingyiting.playback.FakeAudioPlayer
 import com.tingyiting.playback.PlayState
 import com.tingyiting.playback.PlayableItem
@@ -26,6 +27,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when` as whenever
+import android.content.Context
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -337,4 +339,57 @@ class PlayerViewModelTest {
     }
 
     // endregion
+
+    // region 封面搜刮：关键词可编辑，默认回退到书名
+
+    @Test
+    fun scrapeCover_fallsBackToTitle_whenQueryBlank() = vmTest {
+        val book = book(1, "默认专辑名", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        val coverRepository = FakeCoverRepository(bookRepository)
+
+        vm = PlayerViewModel(bookRepository, player, playbackState, coverRepository)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.scrapeCoverFromDouban("   ") // 空白：应回退到书名
+        runCurrent()
+
+        assertEquals("默认专辑名", coverRepository.lastQuery)
+        assertEquals("/covers/book_1.jpg", vm.uiState.value.coverUrl)
+        assertNull(vm.uiState.value.coverError)
+    }
+
+    @Test
+    fun scrapeCover_usesCustomQuery_whenProvided() = vmTest {
+        val book = book(1, "默认专辑名", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        val coverRepository = FakeCoverRepository(bookRepository)
+
+        vm = PlayerViewModel(bookRepository, player, playbackState, coverRepository)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.scrapeCoverFromDouban("  自定义书名  ") // 应去掉首尾空格后使用
+        runCurrent()
+
+        assertEquals("自定义书名", coverRepository.lastQuery)
+    }
+
+    // endregion
+}
+
+/** 记录 scrapeFromDouban 收到的查询词，便于断言默认回退/自定义关键词逻辑。 */
+private class FakeCoverRepository(
+    private val bookRepository: BookRepository
+) : CoverRepository(mock(Context::class.java), bookRepository) {
+    var lastQuery: String? = null
+        private set
+
+    override suspend fun scrapeFromDouban(bookId: Long, title: String): Result<String> {
+        lastQuery = title
+        return Result.success("/covers/book_$bookId.jpg")
+    }
 }

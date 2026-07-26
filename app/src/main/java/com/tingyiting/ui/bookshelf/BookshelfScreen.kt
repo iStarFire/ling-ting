@@ -15,6 +15,9 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tingyiting.data.model.SOURCE_WEBDAV
 import com.tingyiting.playback.PlaybackInfo
 import com.tingyiting.ui.components.CoverArtwork
 import kotlinx.coroutines.launch
@@ -36,6 +40,7 @@ fun BookshelfScreen(
     onNavigateToPlayer: (Long) -> Unit,
     onNavigateToAccounts: () -> Unit,
     onNavigateToWebDav: () -> Unit,
+    onNavigateToReimport: (bookId: Long, path: String) -> Unit = { _, _ -> },
     viewModel: BookshelfViewModel = hiltViewModel()
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
@@ -43,6 +48,13 @@ fun BookshelfScreen(
     val isConfigured by viewModel.isConfigured.collectAsStateWithLifecycle()
 
     var showImportSheet by remember { mutableStateOf(false) }
+
+    // 长按操作菜单（修改名称 / 重新导入 / 删除）
+    var actionBook by remember { mutableStateOf<BookItem?>(null) }
+    var showActionSheet by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -148,7 +160,10 @@ fun BookshelfScreen(
                                 item = item,
                                 playing = playing,
                                 onClick = { onNavigateToPlayer(item.book.id) },
-                                onDelete = { viewModel.deleteBook(item.book.id) }
+                                onLongClick = {
+                                    actionBook = item
+                                    showActionSheet = true
+                                }
                             )
                         }
                     }
@@ -229,6 +244,99 @@ fun BookshelfScreen(
             Spacer(Modifier.height(24.dp))
         }
     }
+
+    // 长按操作菜单：修改名称 / 重新导入 / 删除
+    if (showActionSheet && actionBook != null) {
+        val book = actionBook!!.book
+        val canReimport = book.source == SOURCE_WEBDAV
+        ModalBottomSheet(
+            onDismissRequest = { showActionSheet = false },
+            sheetState = rememberModalBottomSheetState()
+        ) {
+            Text(
+                text = "《${book.title}》",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+            )
+            ListItem(
+                headlineContent = { Text("修改名称") },
+                leadingContent = { Icon(Icons.Default.Edit, contentDescription = null) },
+                modifier = Modifier.clickable {
+                    renameText = book.title
+                    showActionSheet = false
+                    showRenameDialog = true
+                }
+            )
+            ListItem(
+                headlineContent = { Text("重新导入") },
+                supportingContent = {
+                    if (canReimport) Text("刷新本书的曲目索引") else Text("本地导入不支持重新导入")
+                },
+                leadingContent = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                modifier = Modifier.clickable(enabled = canReimport) {
+                    showActionSheet = false
+                    onNavigateToReimport(book.id, book.rootPath)
+                }
+            )
+            ListItem(
+                headlineContent = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                leadingContent = {
+                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                },
+                modifier = Modifier.clickable {
+                    showActionSheet = false
+                    showDeleteConfirm = true
+                }
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    if (showRenameDialog && actionBook != null) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("修改名称") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("书籍名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.renameBook(actionBook!!.book.id, renameText)
+                        showRenameDialog = false
+                    }
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showDeleteConfirm && actionBook != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除书籍") },
+            text = { Text("确定删除《${actionBook!!.book.title}》吗？删除后将无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteBook(actionBook!!.book.id)
+                        showDeleteConfirm = false
+                    }
+                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -237,9 +345,8 @@ private fun BookCard(
     item: BookItem,
     playing: PlaybackInfo?,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onLongClick: () -> Unit
 ) {
-    var showDeleteConfirm by remember { mutableStateOf(false) }
     val isActive = playing != null
 
     Card(
@@ -249,7 +356,7 @@ private fun BookCard(
             .then(if (isActive) Modifier.heightIn(min = 132.dp) else Modifier)
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = { showDeleteConfirm = true }
+                onLongClick = onLongClick
             ),
         colors = CardDefaults.cardColors(
             containerColor = if (isActive) {
@@ -296,30 +403,29 @@ private fun BookCard(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 BookCardContent(item = item, playing = playing)
+                Spacer(modifier = Modifier.height(6.dp))
+                SourceBadge(source = item.book.source)
             }
         }
     }
+}
 
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("删除书籍") },
-            text = { Text("确定要删除《${item.book.title}》吗？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDelete()
-                        showDeleteConfirm = false
-                    }
-                ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("取消")
-                }
-            }
+/** 来源角标：网盘 / 本地。 */
+@Composable
+private fun SourceBadge(source: String) {
+    val (label, color) = when (source) {
+        SOURCE_WEBDAV -> "网盘" to MaterialTheme.colorScheme.primary
+        else -> "本地" to MaterialTheme.colorScheme.secondary
+    }
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = color.copy(alpha = 0.12f),
+        contentColor = color
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
         )
     }
 }

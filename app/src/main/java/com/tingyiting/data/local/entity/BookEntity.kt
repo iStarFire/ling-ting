@@ -2,6 +2,7 @@ package com.tingyiting.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.tingyiting.data.model.SOURCE_WEBDAV
 
 @Entity(tableName = "books")
 data class BookEntity(
@@ -14,6 +15,8 @@ data class BookEntity(
     val webdavUrl: String = "",
     // 导入目录的根路径（用于去重）；单文件书籍为空
     val rootPath: String = "",
+    // 数据来源：SOURCE_WEBDAV（网盘）或 SOURCE_LOCAL（本地导入）
+    val source: String = SOURCE_WEBDAV,
     // 当前播放到的集序号（目录有声剧用）；单文件书籍为 0
     val currentTrackIndex: Int = 0,
     val duration: Long = 0,

@@ -86,7 +86,10 @@ fun AppNavigation(
         ) {
             composable(Screen.Bookshelf.route) {
                 BookshelfScreen(
-                    onNavigateToBrowser = { navController.navigate(Screen.Browser.route) },
+                    onNavigateToBrowser = { navController.navigate(Screen.Browser.createRoute()) },
+                    onNavigateToReimport = { bookId, path ->
+                        navController.navigate(Screen.Browser.createReimportRoute(bookId, path))
+                    },
                     onNavigateToPlayer = { bookId ->
                         navController.navigate(Screen.Player.createRoute(bookId))
                     },
@@ -107,14 +110,32 @@ fun AppNavigation(
                 )
             }
 
-            composable(Screen.Browser.route) {
+            composable(
+                route = Screen.Browser.route,
+                arguments = listOf(
+                    navArgument("reimportBookId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                    navArgument("reimportPath") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    }
+                )
+            ) {
+                val reimportBookId = it.arguments?.getString("reimportBookId")?.toLongOrNull()
+                val reimportPath = it.arguments?.getString("reimportPath")
                 BrowserScreen(
                     onNavigateToBookshelf = { navController.popBackStack() },
                     onNavigateToPlayer = { bookId ->
                         navController.navigate(Screen.Player.createRoute(bookId)) {
                             popUpTo(Screen.Bookshelf.route)
                         }
-                    }
+                    },
+                    reimportBookId = reimportBookId,
+                    reimportPath = reimportPath
                 )
             }
 

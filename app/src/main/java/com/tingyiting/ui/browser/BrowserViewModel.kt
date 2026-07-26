@@ -24,7 +24,10 @@ data class BrowserUiState(
     val importProgressFraction: Float? = null,
     val importError: String? = null,
     val importDone: Boolean = false,
-    val selectedPaths: Set<String> = emptySet()
+    val selectedPaths: Set<String> = emptySet(),
+    /** 重新导入模式：定位到既有书籍的路径并刷新其曲目索引。 */
+    val isReimportMode: Boolean = false,
+    val reimportBookId: Long? = null
 )
 
 @HiltViewModel
@@ -192,5 +195,54 @@ class BrowserViewModel @Inject constructor(
             importError = null,
             importProgressFraction = null
         )
+    }
+
+    /** 进入重新导入模式，定位到既有书籍所在的路径。 */
+    fun startReimport(bookId: Long, path: String) {
+        val segments = path.trim('/').split('/').filter { it.isNotEmpty() }
+        val history = mutableListOf("/")
+        var acc = ""
+        for (seg in segments) {
+            acc += "/$seg"
+            history.add(acc)
+        }
+        _uiState.value = _uiState.value.copy(
+            isReimportMode = true,
+            reimportBookId = bookId,
+            selectedPaths = emptySet()
+        )
+        if (path.isNotBlank()) {
+            _uiState.value = _uiState.value.copy(pathHistory = history)
+            loadFiles(path)
+        }
+    }
+
+    /** 重新导入模式：以当前目录为路径，刷新既有书籍的曲目索引。 */
+    fun reimportCurrentDirectory() {
+        val bookId = _uiState.value.reimportBookId ?: return
+        val path = _uiState.value.currentPath
+        _uiState.value = _uiState.value.copy(
+            isImporting = true,
+            importError = null,
+            importProgress = "正在刷新索引..."
+        )
+        viewModelScope.launch {
+            bookRepository.reimportWebDav(bookId, path).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(
+                        isImporting = false,
+                        importProgress = null,
+                        importDone = true
+                    )
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        isImporting = false,
+                        importProgress = null,
+                        importError = "重新导入失败：${e.message}"
+                    )
+                }
+            )
+        }
     }
 }

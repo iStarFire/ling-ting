@@ -169,6 +169,29 @@ class BookshelfViewModelTest {
         assertEquals(1, player.playCount)
     }
 
+    @Test
+    fun bookItem_preservesSource() = runTest {
+        bookDao.booksFlow.value = listOf(
+            BookEntity(id = 10L, title = "本地书", rootPath = "/tree", source = "local"),
+            BookEntity(id = 11L, title = "网盘书", rootPath = "/dav/x", source = "webdav")
+        )
+        val items = collectBooks()
+        assertEquals(2, items.size)
+        assertEquals("local", items.first { it.book.id == 10L }.book.source)
+        assertEquals("webdav", items.first { it.book.id == 11L }.book.source)
+    }
+
+    @Test
+    fun renameBook_updatesTitleInRepository() = runTest {
+        bookDao.booksFlow.value = listOf(BookEntity(id = 1L, title = "旧名", webdavUrl = "u"))
+        collectBooks()
+
+        viewModel.renameBook(1L, " 新名 ")
+        advanceUntilIdle()
+
+        assertEquals("新名", bookDao.booksFlow.value.first().title)
+    }
+
     /** books 为 WhileSubscribed 的 StateFlow，需要先订阅再取值。 */
     private fun kotlinx.coroutines.test.TestScope.collectBooks(): List<BookItem> {
         backgroundScope.launch { viewModel.books.collect {} }
@@ -196,6 +219,9 @@ class BookshelfViewModelTest {
         override suspend fun getBookByRootPath(rootPath: String): BookEntity? = null
         override suspend fun insert(book: BookEntity): Long = 0L
         override suspend fun update(book: BookEntity) {}
+        override suspend fun updateTitle(id: Long, title: String) {
+            booksFlow.value = booksFlow.value.map { if (it.id == id) it.copy(title = title) else it }
+        }
         override suspend fun delete(book: BookEntity) {}
         override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {}
         override suspend fun updateCover(id: Long, coverUrl: String) {}
