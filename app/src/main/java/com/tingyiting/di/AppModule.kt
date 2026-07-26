@@ -3,9 +3,12 @@ package com.tingyiting.di
 import android.content.Context
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.tingyiting.data.repository.WebDavRepository
 import com.tingyiting.network.DynamicAuthDataSourceFactory
+import com.tingyiting.playback.AudioPlayer
+import com.tingyiting.playback.ExoAudioPlayer
 import com.tingyiting.playback.ExoPlaybackState
 import com.tingyiting.playback.PlaybackState
 import dagger.Module
@@ -31,10 +34,15 @@ object AppModule {
             DynamicAuthDataSourceFactory(webDavRepository)
         )
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(3))
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
     }
+
+    @Provides
+    @Singleton
+    fun provideAudioPlayer(player: ExoPlayer): AudioPlayer = ExoAudioPlayer(player)
 
     @Provides
     @Singleton

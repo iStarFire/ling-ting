@@ -1,16 +1,15 @@
 package com.tingyiting.ui.player
 
-import androidx.lifecycle.ViewModel
 import android.util.Log
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import com.tingyiting.data.model.Book
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
-import com.tingyiting.data.repository.WebDavRepository
+import com.tingyiting.playback.AudioPlayer
+import com.tingyiting.playback.PlayState
+import com.tingyiting.playback.PlayableItem
+import com.tingyiting.playback.PlaybackError
 import com.tingyiting.playback.PlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -25,12 +24,14 @@ data class PlayerUiState(
     val bookId: Long = 0,
     val title: String = "",
     val isPlaying: Boolean = false,
+    val playWhenReady: Boolean = false,
     val currentPosition: Long = 0,
     val duration: Long = 0,
-    val isLoading: Boolean = true,
+    val isInitialLoading: Boolean = true,
+    val isBuffering: Boolean = false,
     val error: String? = null,
+    val playbackError: String? = null,
     val sleepTimerRemaining: Int? = null,
-    // 多集（有声剧）相关
     val isPlaylist: Boolean = false,
     val currentTrackIndex: Int = 0,
     val trackCount: Int = 0,
@@ -41,128 +42,100 @@ data class PlayerUiState(
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     private val bookRepository: BookRepository,
-    private val webDavRepository: WebDavRepository,
-    private val player: ExoPlayer,
+    private val player: AudioPlayer,
     private val playbackState: PlaybackState
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState = _uiState.asStateFlow()
 
+    private var initializeJob: Job? = null
     private var progressSaveJob: Job? = null
+    private var positionJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var listenerAttached = false
 
-    private companion object {
-        const val TAG = "PlayerViewModel"
-    }
+    /** 当前加载的书与曲目，供错误恢复时重建媒体源。 */
+    private var activeBook: Book? = null
+    private var activeTracks: List<Track> = emptyList()
 
     fun initialize(bookId: Long) {
-        _uiState.update { it.copy(isLoading = true, error = null) }
+        if (bookId == 0L || (initializeJob?.isActive == true && _uiState.value.bookId == bookId)) return
+        initializeJob?.cancel()
+        _uiState.update { it.copy(bookId = bookId, isInitialLoading = true, error = null) }
 
-        viewModelScope.launch {
+        initializeJob = viewModelScope.launch {
             try {
                 val book = bookRepository.getBookById(bookId)
                 if (book == null) {
-                    Log.w(TAG, "加载书籍失败：书籍未找到 bookId=$bookId")
-                    _uiState.update { it.copy(error = "书籍未找到", isLoading = false) }
+                    _uiState.update { it.copy(error = "书籍未找到", isInitialLoading = false) }
                     return@launch
                 }
-
-                // 目录导入书：rootPath 非空；单文件书：webdavUrl 非空。
-                val isDirectoryBook = book.rootPath.isNotEmpty()
                 val tracks = bookRepository.getTracks(bookId)
-                Log.d(
-                    TAG,
-                    "加载书籍 bookId=${book.id} title=${book.title} " +
-                        "是否目录书=$isDirectoryBook track数量=${tracks.size}"
-                )
-
-                if (isDirectoryBook) {
-                    // 目录导入书必须依赖 tracks 构建播放列表，绝不能回退到 webdavUrl（目录书 webdavUrl 为空）。
-                    if (tracks.isEmpty()) {
-                        Log.e(
-                            TAG,
-                            "目录书无曲目，无法播放 bookId=${book.id} rootPath=${book.rootPath} " +
-                                "是否目录书=true track数量=0 失败原因=目录书没有可播放的音频"
-                        )
-                        _uiState.update {
-                            it.copy(
-                                bookId = book.id,
-                                title = book.title,
-                                error = "该目录书没有可播放的音频",
-                                isLoading = false
-                            )
-                        }
-                        return@launch
-                    }
-                    val emptyUrlCount = tracks.count { it.webdavUrl.isEmpty() }
-                    if (emptyUrlCount > 0) {
-                        Log.w(
-                            TAG,
-                            "目录书存在空地址曲目 bookId=${book.id} 是否目录书=true " +
-                                "track数量=${tracks.size} 空地址数量=$emptyUrlCount"
-                        )
-                    }
-                    buildPlaylist(player, book, tracks)
-                    return@launch
-                }
-
-                // 单文件书籍：若已有关联曲目则走播放列表，否则用单个 webdavUrl。
-                if (tracks.isNotEmpty()) {
-                    buildPlaylist(player, book, tracks)
-                    return@launch
-                }
-
-                if (book.webdavUrl.isEmpty()) {
-                    Log.e(
-                        TAG,
-                        "单文件书无播放地址 bookId=${book.id} 是否目录书=false " +
-                            "track数量=0 失败原因=webdavUrl 为空"
-                    )
+                activeBook = book
+                activeTracks = tracks
+                val isDirectoryBook = book.rootPath.isNotEmpty()
+                if (isDirectoryBook && tracks.isEmpty()) {
                     _uiState.update {
-                        it.copy(
-                            bookId = book.id,
-                            title = book.title,
-                            error = "该书没有可播放的音频地址",
-                            isLoading = false
-                        )
+                        it.copy(title = book.title, error = "该目录书没有可播放的音频", isInitialLoading = false)
+                    }
+                    return@launch
+                }
+                if (!isDirectoryBook && tracks.isEmpty() && book.webdavUrl.isEmpty()) {
+                    _uiState.update {
+                        it.copy(title = book.title, error = "该书没有可播放的音频地址", isInitialLoading = false)
                     }
                     return@launch
                 }
 
-                playSingleFile(player, book)
-            } catch (e: Exception) {
-                Log.e(TAG, "加载书籍异常 bookId=$bookId", e)
+                attachListener()
+                val activeInfo = playbackState.info.value
+                if (activeInfo?.bookId == bookId && player.itemCount > 0) {
+                    bindToActivePlayer(book, tracks)
+                } else if (tracks.isNotEmpty()) {
+                    buildPlaylist(book, tracks)
+                } else {
+                    playSingleFile(book)
+                }
+                startJobs(book.id)
+            } catch (error: Exception) {
+                Log.e(TAG, "加载书籍异常 bookId=$bookId", error)
                 _uiState.update {
                     it.copy(
-                        error = "加载失败：${e.message ?: e.javaClass.simpleName}",
-                        isLoading = false
+                        error = "加载失败：${error.message ?: error.javaClass.simpleName}",
+                        isInitialLoading = false
                     )
                 }
             }
         }
     }
 
-    private fun buildPlaylist(player: ExoPlayer, book: Book, tracks: List<Track>) {
+    private fun bindToActivePlayer(book: Book, tracks: List<Track>) {
+        val index = player.currentItemIndex.coerceAtLeast(0)
+        val isPlaylist = tracks.isNotEmpty()
+        val duration = validDuration(player.duration, tracks.getOrNull(index)?.duration ?: book.duration)
+        val position = player.currentPosition.coerceAtLeast(0)
+        _uiState.value = PlayerUiState(
+            bookId = book.id,
+            title = book.title,
+            isPlaying = player.isPlaying,
+            playWhenReady = player.playWhenReady,
+            currentPosition = position,
+            duration = duration,
+            isInitialLoading = false,
+            isBuffering = player.playState == PlayState.BUFFERING,
+            isPlaylist = isPlaylist,
+            currentTrackIndex = index,
+            trackCount = if (isPlaylist) tracks.size else 1,
+            trackTitle = tracks.getOrNull(index)?.title ?: book.title,
+            tracks = updateTrackProgress(tracks, index, position, duration)
+        )
+    }
+
+    private fun buildPlaylist(book: Book, tracks: List<Track>) {
         val startIndex = book.currentTrackIndex.coerceIn(0, tracks.lastIndex)
-        val startPosition = tracks[startIndex].position.coerceAtLeast(0)
-
-        val mediaItems = tracks.map { track ->
-            MediaItem.Builder()
-                .setUri(track.webdavUrl)
-                .setMediaMetadata(
-                    MediaMetadata.Builder().setTitle(track.title).build()
-                )
-                .build()
-        }
-
-        player.setMediaItems(mediaItems, startIndex, startPosition)
-        player.addListener(playlistListener)
-        player.prepare()
-        player.play()
-
-        playbackState.setCurrentBook(book.id, tracks.size)
-
+        val startTrack = tracks[startIndex]
+        val startPosition = resumePosition(startTrack)
         _uiState.update {
             it.copy(
                 bookId = book.id,
@@ -170,128 +143,218 @@ class PlayerViewModel @Inject constructor(
                 isPlaylist = true,
                 trackCount = tracks.size,
                 currentTrackIndex = startIndex,
-                trackTitle = tracks[startIndex].title,
+                trackTitle = startTrack.title,
+                currentPosition = startPosition,
+                duration = startTrack.duration,
                 tracks = tracks,
-                isLoading = false
+                isInitialLoading = false,
+                isBuffering = true,
+                error = null,
+                playbackError = null
             )
         }
-
-        startProgressSaver(book.id)
-        startPositionLoop()
+        val items = tracks.map { PlayableItem(url = it.webdavUrl, title = it.title) }
+        player.setPlaylist(items, startIndex, startPosition)
+        player.prepare()
+        player.play()
+        playbackState.setCurrentBook(book.id, tracks.size)
     }
 
-    private fun playSingleFile(
-        player: ExoPlayer,
-        book: Book
-    ) {
+    private fun playSingleFile(book: Book) {
         _uiState.update {
             it.copy(
                 bookId = book.id,
                 title = book.title,
                 duration = book.duration,
+                currentPosition = book.position,
                 isPlaylist = false,
-                isLoading = false
+                trackCount = 1,
+                trackTitle = book.title,
+                tracks = emptyList(),
+                isInitialLoading = false,
+                isBuffering = true,
+                error = null,
+                playbackError = null
             )
         }
-
-        val mediaItem = MediaItem.Builder()
-            .setUri(book.webdavUrl)
-            .setMediaMetadata(
-                MediaMetadata.Builder().setTitle(book.title).build()
-            )
-            .build()
-
-        player.setMediaItem(mediaItem)
-        player.seekTo(book.position)
+        player.setItem(
+            PlayableItem(url = book.webdavUrl, title = book.title),
+            book.position.coerceAtLeast(0)
+        )
         player.prepare()
         player.play()
-
-        player.addListener(singleFileListener)
-
         playbackState.setCurrentBook(book.id, 1)
-
-        startProgressSaver(book.id)
-        startPositionLoop()
     }
 
-    private val singleFileListener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            _uiState.update { it.copy(isPlaying = isPlaying) }
-            if (isPlaying) startProgressSaver(_uiState.value.bookId)
-            else stopProgressSaver()
-        }
-
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            when (playbackState) {
-                Player.STATE_READY -> _uiState.update {
-                    it.copy(duration = player?.duration?.coerceAtLeast(0) ?: 0, isLoading = false)
-                }
-                Player.STATE_BUFFERING -> _uiState.update { it.copy(isLoading = true) }
-                Player.STATE_ENDED -> _uiState.update { it.copy(isPlaying = false) }
-            }
+    private fun attachListener() {
+        if (!listenerAttached) {
+            player.addListener(playerListener)
+            listenerAttached = true
         }
     }
 
-    private val playlistListener = object : Player.Listener {
+    private val playerListener = object : AudioPlayer.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _uiState.update { it.copy(isPlaying = isPlaying) }
-            if (isPlaying) startProgressSaver(_uiState.value.bookId)
-            else stopProgressSaver()
+            if (!isPlaying) saveProgress()
         }
 
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            when (playbackState) {
-                Player.STATE_READY -> _uiState.update {
-                    it.copy(duration = player?.duration?.coerceAtLeast(0) ?: 0, isLoading = false)
-                }
-                Player.STATE_BUFFERING -> _uiState.update { it.copy(isLoading = true) }
-                Player.STATE_ENDED -> _uiState.update { it.copy(isPlaying = false) }
-            }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean) {
+            _uiState.update { it.copy(playWhenReady = playWhenReady) }
         }
 
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            val prevIndex = _uiState.value.currentTrackIndex
-            val newIndex = player?.currentMediaItemIndex ?: prevIndex
-            if (newIndex != prevIndex) {
-                // 保存上一集进度
-                saveCurrentTrackProgress(prevIndex)
-                _uiState.value.bookId.let { bookId ->
-                    val title = _uiState.value.tracks.getOrNull(newIndex)?.title ?: ""
+        override fun onPlayStateChanged(state: PlayState) {
+            when (state) {
+                PlayState.READY -> {
+                    val duration = validDuration(player.duration, _uiState.value.duration)
                     _uiState.update {
-                        it.copy(currentTrackIndex = newIndex, trackTitle = title, currentPosition = 0)
+                        it.copy(duration = duration, isInitialLoading = false, isBuffering = false)
                     }
-                    viewModelScope.launch { bookRepository.updateCurrentTrack(bookId, newIndex) }
                 }
+                PlayState.BUFFERING -> _uiState.update { it.copy(isBuffering = true) }
+                PlayState.ENDED -> {
+                    val current = _uiState.value
+                    if (current.isPlaylist) persistTrackProgress(
+                        current.currentTrackIndex,
+                        current.duration,
+                        current.duration
+                    ) else saveProgress()
+                    _uiState.update {
+                        it.copy(isPlaying = false, playWhenReady = false, isBuffering = false)
+                    }
+                }
+                PlayState.IDLE -> _uiState.update { it.copy(isBuffering = false) }
+            }
+        }
+
+        override fun onItemTransition(newIndex: Int, isAuto: Boolean) {
+            val oldState = _uiState.value
+            val index = newIndex.coerceAtLeast(0)
+            if (!oldState.isPlaylist || index == oldState.currentTrackIndex) return
+
+            if (isAuto) {
+                val oldTrack = oldState.tracks.getOrNull(oldState.currentTrackIndex)
+                val duration = validDuration(oldTrack?.duration ?: 0, oldState.duration)
+                persistTrackProgress(oldState.currentTrackIndex, duration, duration)
+            }
+            val track = oldState.tracks.getOrNull(index)
+            val position = player.currentPosition.coerceAtLeast(0)
+            _uiState.update {
+                it.copy(
+                    currentTrackIndex = index,
+                    trackTitle = track?.title.orEmpty(),
+                    currentPosition = position,
+                    duration = validDuration(player.duration, track?.duration ?: 0),
+                    playbackError = null
+                )
+            }
+            viewModelScope.launch { bookRepository.updateCurrentTrack(oldState.bookId, index) }
+        }
+
+        override fun onPlaybackError(error: PlaybackError) {
+            // 日志脱敏：只打印错误码/HTTP 状态/异常类型，不打印媒体 URL
+            Log.e(
+                TAG,
+                "onPlaybackError bookId=${_uiState.value.bookId} track=${player.currentItemIndex} " +
+                    "code=${error.codeName} http=${error.httpStatus ?: "n/a"} " +
+                    "cause=${error.causeType ?: "n/a"}"
+            )
+            _uiState.update {
+                it.copy(isBuffering = false, playbackError = "播放失败，请检查网络后重试")
             }
         }
     }
 
     fun togglePlayPause() {
-        player?.let { if (it.isPlaying) it.pause() else it.play() }
-    }
-
-    fun seekTo(position: Long) {
-        player?.seekTo(position)
-        val state = _uiState.value
-        viewModelScope.launch {
-            if (state.isPlaylist) {
-                bookRepository.saveTrackProgress(state.bookId, state.currentTrackIndex, position, state.duration)
-            } else {
-                bookRepository.updateProgress(state.bookId, position, state.duration)
+        if (_uiState.value.playbackError != null) {
+            _uiState.update { it.copy(playbackError = null, isBuffering = true) }
+            recoverFromError()
+            return
+        }
+        when (player.playState) {
+            PlayState.IDLE -> {
+                player.prepare()
+                player.play()
             }
+            PlayState.ENDED -> {
+                if (player.itemCount > 1) player.seekTo(player.currentItemIndex, 0) else player.seekTo(0)
+                player.play()
+            }
+            else -> if (player.playWhenReady) player.pause() else player.play()
         }
     }
 
+    fun retryPlayback() {
+        _uiState.update { it.copy(playbackError = null, isBuffering = true) }
+        recoverFromError()
+    }
+
+    /** 发生错误时重建当前媒体源并恢复到保存进度（日志已脱敏，不泄露媒体 URL）。 */
+    private fun recoverFromError() {
+        val book = activeBook ?: run {
+            _uiState.update { it.copy(isBuffering = false) }
+            return
+        }
+        if (activeTracks.isNotEmpty()) {
+            val index = player.currentItemIndex.coerceAtLeast(0)
+            val track = activeTracks.getOrNull(index) ?: return
+            player.replaceItem(index, PlayableItem(url = track.webdavUrl, title = track.title))
+            player.seekTo(index, resumePosition(track))
+        } else {
+            player.setItem(
+                PlayableItem(url = book.webdavUrl, title = book.title),
+                book.position.coerceAtLeast(0)
+            )
+        }
+        player.prepare()
+        player.play()
+    }
+
+    fun seekTo(position: Long) {
+        val duration = _uiState.value.duration
+        val target = position.coerceIn(0, if (duration > 0) duration else Long.MAX_VALUE)
+        player.seekTo(target)
+        _uiState.update { it.copy(currentPosition = target) }
+        saveProgress(target)
+    }
+
+    fun seekBy(offsetMs: Long) {
+        seekTo(_uiState.value.currentPosition + offsetMs)
+    }
+
     fun nextTrack() {
-        player?.let { if (it.currentMediaItemIndex < it.mediaItemCount - 1) it.seekToNextMediaItem() }
+        if (player.currentItemIndex < player.itemCount - 1) {
+            saveProgress()
+            player.seekToNextItem()
+        }
     }
 
     fun prevTrack() {
-        player?.let { if (it.currentMediaItemIndex > 0) it.seekToPreviousMediaItem() }
+        if (player.currentItemIndex > 0) {
+            saveProgress()
+            player.seekToPreviousItem()
+        }
     }
 
     fun selectTrack(index: Int) {
-        player?.let { if (index in 0 until it.mediaItemCount) it.seekTo(index, 0) }
+        val state = _uiState.value
+        val track = state.tracks.getOrNull(index) ?: return
+        if (index !in 0 until player.itemCount) return
+        saveProgress()
+        player.seekTo(index, resumePosition(track))
+        player.play()
+    }
+
+    fun saveProgress(positionOverride: Long? = null) {
+        val state = _uiState.value
+        if (state.bookId == 0L) return
+        val position = positionOverride ?: player.currentPosition.coerceAtLeast(0)
+        val duration = validDuration(player.duration, state.duration)
+        if (state.isPlaylist) {
+            persistTrackProgress(state.currentTrackIndex, position, duration)
+        } else {
+            viewModelScope.launch { bookRepository.updateProgress(state.bookId, position, duration) }
+        }
     }
 
     fun setSleepTimer(minutes: Int) {
@@ -304,7 +367,7 @@ class PlayerViewModel @Inject constructor(
                 remaining--
                 _uiState.update { it.copy(sleepTimerRemaining = remaining) }
             }
-            player?.pause()
+            player.pause()
             _uiState.update { it.copy(sleepTimerRemaining = null) }
         }
     }
@@ -314,58 +377,94 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(sleepTimerRemaining = null) }
     }
 
-    private fun saveCurrentTrackProgress(index: Int) {
+    private fun persistTrackProgress(index: Int, position: Long, duration: Long) {
         val state = _uiState.value
-        val pos = player?.currentPosition?.coerceAtLeast(0) ?: 0
-        val dur = player?.duration?.coerceAtLeast(0) ?: state.duration
+        if (index !in state.tracks.indices) return
+        val safeDuration = duration.coerceAtLeast(0)
+        val safePosition = position.coerceIn(0, if (safeDuration > 0) safeDuration else Long.MAX_VALUE)
+        _uiState.update {
+            it.copy(tracks = updateTrackProgress(it.tracks, index, safePosition, safeDuration))
+        }
         viewModelScope.launch {
-            bookRepository.saveTrackProgress(state.bookId, index, pos, dur)
+            bookRepository.saveTrackProgress(state.bookId, index, safePosition, safeDuration)
+            bookRepository.updateCurrentTrack(state.bookId, _uiState.value.currentTrackIndex)
         }
     }
 
-    private fun startProgressSaver(bookId: Long) {
+    private fun startJobs(bookId: Long) {
         progressSaveJob?.cancel()
         progressSaveJob = viewModelScope.launch {
             while (true) {
-                delay(15_000)
-                val state = _uiState.value
-                val pos = player?.currentPosition?.coerceAtLeast(0) ?: state.currentPosition
-                val dur = player?.duration?.coerceAtLeast(0) ?: state.duration
-                if (state.isPlaylist) {
-                    bookRepository.saveTrackProgress(bookId, state.currentTrackIndex, pos, dur)
-                    bookRepository.updateCurrentTrack(bookId, state.currentTrackIndex)
-                } else {
-                    bookRepository.updateProgress(bookId, pos, dur)
-                }
+                delay(PROGRESS_SAVE_INTERVAL_MS)
+                if (_uiState.value.bookId == bookId) saveProgress()
             }
         }
-    }
-
-    private fun stopProgressSaver() {
-        val state = _uiState.value
-        if (state.isPlaylist) saveCurrentTrackProgress(state.currentTrackIndex)
-        else viewModelScope.launch {
-            bookRepository.updateProgress(state.bookId, state.currentPosition, state.duration)
-        }
-        progressSaveJob?.cancel()
-    }
-
-    private fun startPositionLoop() {
-        viewModelScope.launch {
+        positionJob?.cancel()
+        positionJob = viewModelScope.launch {
             while (true) {
-                delay(500)
+                delay(POSITION_UPDATE_INTERVAL_MS)
+                val state = _uiState.value
+                val position = player.currentPosition.coerceAtLeast(0)
+                val duration = validDuration(player.duration, state.duration)
                 _uiState.update {
-                    it.copy(currentPosition = player?.currentPosition?.coerceAtLeast(0) ?: it.currentPosition)
+                    it.copy(
+                        currentPosition = position,
+                        duration = duration,
+                        tracks = if (it.isPlaylist) {
+                            updateTrackProgress(it.tracks, it.currentTrackIndex, position, duration)
+                        } else it.tracks
+                    )
                 }
             }
+        }
+    }
+
+    /** 保存进度并停掉所有后台任务；onCleared 调用，测试也可直接调用以结束轮询协程。 */
+    internal fun release() {
+        saveProgress()
+        initializeJob?.cancel()
+        progressSaveJob?.cancel()
+        positionJob?.cancel()
+        sleepTimerJob?.cancel()
+        if (listenerAttached) {
+            player.removeListener(playerListener)
+            listenerAttached = false
         }
     }
 
     override fun onCleared() {
-        progressSaveJob?.cancel()
-        sleepTimerJob?.cancel()
-        player?.removeListener(singleFileListener)
-        player?.removeListener(playlistListener)
+        release()
         super.onCleared()
     }
+
+    private companion object {
+        const val TAG = "PlayerViewModel"
+        const val PROGRESS_SAVE_INTERVAL_MS = 15_000L
+        const val POSITION_UPDATE_INTERVAL_MS = 500L
+    }
+}
+
+internal const val TRACK_COMPLETION_THRESHOLD = 0.95
+
+internal fun isTrackCompleted(track: Track): Boolean =
+    track.duration > 0 && track.position.toDouble() / track.duration >= TRACK_COMPLETION_THRESHOLD
+
+internal fun trackProgressPercent(track: Track): Int = when {
+    track.duration <= 0 -> 0
+    else -> ((track.position.coerceIn(0, track.duration) * 100) / track.duration).toInt()
+}
+
+internal fun resumePosition(track: Track): Long =
+    if (isTrackCompleted(track)) 0 else track.position.coerceAtLeast(0)
+
+private fun validDuration(playerDuration: Long, fallback: Long): Long =
+    playerDuration.takeIf { it > 0 } ?: fallback.coerceAtLeast(0)
+
+private fun updateTrackProgress(
+    tracks: List<Track>,
+    index: Int,
+    position: Long,
+    duration: Long
+): List<Track> = tracks.mapIndexed { trackIndex, track ->
+    if (trackIndex == index) track.copy(position = position, duration = duration) else track
 }

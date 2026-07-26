@@ -48,6 +48,17 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests {
+            // 让 android 桩（如 android.util.Log）在 JVM 单测中返回默认值而非抛 Stub 异常
+            isReturnDefaultValues = true
+        }
+    }
+
+    tasks.withType<Test> {
+        maxHeapSize = "1g"
+    }
+
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
@@ -119,6 +130,7 @@ dependencies {
 
     // Unit tests (JVM)
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.1")
     testImplementation("org.mockito:mockito-core:5.11.0")
 }

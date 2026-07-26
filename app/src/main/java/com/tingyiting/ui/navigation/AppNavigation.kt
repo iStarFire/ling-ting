@@ -93,8 +93,10 @@ fun AppNavigation(navController: NavHostController) {
             composable(
                 route = Screen.Player.route,
                 arguments = listOf(navArgument("bookId") { type = NavType.LongType })
-            ) {
+            ) { backStackEntry ->
+                val bookId = backStackEntry.arguments?.getLong("bookId") ?: 0L
                 PlayerScreen(
+                    bookId = bookId,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
