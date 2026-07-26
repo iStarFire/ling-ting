@@ -201,6 +201,27 @@ fun PlayerScreen(
                     }
                 }
 
+                // 选集移到文本下方，独占一行，避免与定时/跳过头尾挤在同一行造成换行
+                if (state.isPlaylist) {
+                    AssistChip(
+                        onClick = { showTrackSheet = true },
+                        label = {
+                            Text(
+                                text = "选集 ${state.currentTrackIndex + 1}/${state.trackCount}",
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                }
+
                 state.error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                 }
@@ -229,16 +250,11 @@ fun PlayerScreen(
                     enabled = !state.isInitialLoading && state.error == null
                 )
 
-                PlaybackControls(
-                    state = state,
-                    onPrevious = viewModel::prevTrack,
-                    onSeekBack = { viewModel.seekBy(-SEEK_INTERVAL_MS) },
-                    onPlayPause = viewModel::togglePlayPause,
-                    onSeekForward = { viewModel.seekBy(SEEK_INTERVAL_MS) },
-                    onNext = viewModel::nextTrack
-                )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 定时 + 跳过头尾放在播放按钮上方一行，左 / 右两端对齐
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     AssistChip(
                         onClick = { showSleepTimerDialog = true },
                         label = {
@@ -269,7 +285,9 @@ fun PlayerScreen(
                                     state.introSkipEnabled -> "跳过片头 ${state.introSkipSeconds}s"
                                     state.outroSkipEnabled -> "跳过片尾 ${state.outroSkipSeconds}s"
                                     else -> "跳过头尾"
-                                }
+                                },
+                                maxLines = 1,
+                                softWrap = false
                             )
                         },
                         leadingIcon = {
@@ -282,20 +300,16 @@ fun PlayerScreen(
                             )
                         }
                     )
-                    if (state.isPlaylist) {
-                        AssistChip(
-                            onClick = { showTrackSheet = true },
-                            label = { Text("选集 ${state.currentTrackIndex + 1}/${state.trackCount}") },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        )
-                    }
                 }
+
+                PlaybackControls(
+                    state = state,
+                    onPrevious = viewModel::prevTrack,
+                    onSeekBack = { viewModel.seekBy(-SEEK_INTERVAL_MS) },
+                    onPlayPause = viewModel::togglePlayPause,
+                    onSeekForward = { viewModel.seekBy(SEEK_INTERVAL_MS) },
+                    onNext = viewModel::nextTrack
+                )
             }
         }
     }
