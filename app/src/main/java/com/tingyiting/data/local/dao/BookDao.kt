@@ -30,4 +30,7 @@ interface BookDao {
 
     @Query("UPDATE books SET position = :position, duration = :duration, lastPlayedAt = :timestamp WHERE id = :id")
     suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long)
+
+    @Query("UPDATE books SET coverUrl = :coverUrl WHERE id = :id")
+    suspend fun updateCover(id: Long, coverUrl: String)
 }

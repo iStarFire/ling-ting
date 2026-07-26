@@ -198,6 +198,7 @@ class BookshelfViewModelTest {
         override suspend fun update(book: BookEntity) {}
         override suspend fun delete(book: BookEntity) {}
         override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {}
+        override suspend fun updateCover(id: Long, coverUrl: String) {}
     }
 
     private class FakeTrackDao : TrackDao {

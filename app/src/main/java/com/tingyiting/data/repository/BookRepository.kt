@@ -110,6 +110,10 @@ open class BookRepository @Inject constructor(
         bookDao.updateProgress(id, position, duration, System.currentTimeMillis())
     }
 
+    open suspend fun updateCover(bookId: Long, coverUrl: String) {
+        bookDao.updateCover(bookId, coverUrl)
+    }
+
     private fun BookEntity.toBook() = Book(
         id = id,
         title = title,

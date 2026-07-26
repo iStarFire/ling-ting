@@ -1,7 +1,16 @@
 package com.tingyiting.ui.player
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -24,11 +34,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
@@ -55,12 +68,21 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,12 +90,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.tingyiting.ui.components.BookCover
+import com.tingyiting.data.model.CoverCrop
+import com.tingyiting.ui.components.CoverArtwork
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 private const val LOADING_OVERLAY_ALPHA = 0.45f
 private const val SEEK_INTERVAL_MS = 15_000L
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PlayerScreen(
     bookId: Long,
@@ -83,9 +110,14 @@ fun PlayerScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showTrackSheet by remember { mutableStateOf(false) }
+    var showCoverSheet by remember { mutableStateOf(false) }
+    var cropImageUri by remember { mutableStateOf<Uri?>(null) }
     var draggedFraction by remember { mutableStateOf<Float?>(null) }
     val trackSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val trackListState = rememberLazyListState()
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        cropImageUri = uri
+    }
 
     LaunchedEffect(bookId) {
         if (bookId != 0L) viewModel.initialize(bookId)
@@ -127,7 +159,9 @@ fun PlayerScreen(
                 if (!isLandscape) {
                     Artwork(
                         title = state.title,
+                        coverUrl = state.coverUrl,
                         showLoading = state.isInitialLoading || state.isBuffering,
+                        onEdit = { showCoverSheet = true },
                         modifier = Modifier.size(260.dp)
                     )
                 }
@@ -235,6 +269,62 @@ fun PlayerScreen(
         )
     }
 
+    if (showCoverSheet) {
+        ModalBottomSheet(onDismissRequest = { showCoverSheet = false }) {
+            Text(
+                text = "编辑封面",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+            )
+            ListItem(
+                headlineContent = { Text("从豆瓣自动搜刮") },
+                supportingContent = {
+                    Text(
+                        text = if (state.isCoverUpdating) "正在搜索并保存封面..." else "按书名搜索封面并保存到本地"
+                    )
+                },
+                leadingContent = {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                },
+                modifier = Modifier.clickable(enabled = !state.isCoverUpdating) {
+                    viewModel.scrapeCoverFromDouban()
+                }
+            )
+            ListItem(
+                headlineContent = { Text("选择本地图片") },
+                supportingContent = { Text("从相册或文件中选择封面") },
+                leadingContent = {
+                    Icon(Icons.Default.Image, contentDescription = null)
+                },
+                modifier = Modifier.clickable(enabled = !state.isCoverUpdating) {
+                    coverPicker.launch("image/*")
+                    showCoverSheet = false
+                }
+            )
+            state.coverError?.let { message ->
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+
+    cropImageUri?.let { uri ->
+        CoverCropSheet(
+            uri = uri,
+            isSaving = state.isCoverUpdating,
+            onConfirm = { crop ->
+                viewModel.importLocalCover(uri, crop)
+                cropImageUri = null
+            },
+            onDismiss = { cropImageUri = null }
+        )
+    }
+
     if (showTrackSheet && state.isPlaylist) {
         ModalBottomSheet(
             onDismissRequest = { showTrackSheet = false },
@@ -311,18 +401,45 @@ fun PlayerScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Artwork(title: String, showLoading: Boolean, modifier: Modifier = Modifier) {
+private fun Artwork(
+    title: String,
+    coverUrl: String,
+    showLoading: Boolean,
+    onEdit: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hasCover = coverUrl.isNotBlank()
     Box(
-        modifier = modifier.clip(RoundedCornerShape(28.dp)),
+        modifier = modifier
+            .clip(RoundedCornerShape(28.dp))
+            .combinedClickable(
+                onClick = { if (!hasCover) onEdit() },
+                onLongClick = { if (hasCover) onEdit() }
+            ),
         contentAlignment = Alignment.Center
     ) {
-        BookCover(
+        CoverArtwork(
             title = title,
+            coverUrl = coverUrl,
             modifier = Modifier.fillMaxSize(),
             cornerRadius = 28.dp,
-            fontSize = 96.sp
+            fallbackFontSize = 96.sp
         )
+        if (!hasCover) {
+            Icon(
+                imageVector = Icons.Default.Edit,
+                contentDescription = "编辑封面",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(14.dp)
+                    .background(Color.Black.copy(alpha = 0.36f), RoundedCornerShape(16.dp))
+                    .padding(6.dp)
+                    .size(18.dp)
+            )
+        }
         if (showLoading) {
             Box(
                 modifier = Modifier
@@ -332,6 +449,149 @@ private fun Artwork(title: String, showLoading: Boolean, modifier: Modifier = Mo
             ) {
                 CircularProgressIndicator(color = Color.White)
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CoverCropSheet(
+    uri: Uri,
+    isSaving: Boolean,
+    onConfirm: (CoverCrop) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, uri) {
+        value = withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        }
+    }
+    var crop by remember(uri) { mutableStateOf<CoverCrop?>(null) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "裁剪封面",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+            )
+            if (bitmap == null) {
+                Box(
+                    modifier = Modifier
+                        .size(280.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                SquareCropPreview(
+                    bitmap = bitmap!!,
+                    onCropChanged = { crop = it }
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 18.dp, bottom = 24.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss, enabled = !isSaving) {
+                    Text("取消")
+                }
+                TextButton(
+                    onClick = { crop?.let(onConfirm) },
+                    enabled = crop != null && !isSaving
+                ) {
+                    Text(if (isSaving) "保存中..." else "保存")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SquareCropPreview(
+    bitmap: Bitmap,
+    onCropChanged: (CoverCrop) -> Unit
+) {
+    val density = LocalDensity.current
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
+    var zoom by remember(bitmap) { mutableStateOf(1f) }
+    var offsetX by remember(bitmap) { mutableStateOf(0f) }
+    var offsetY by remember(bitmap) { mutableStateOf(0f) }
+
+    val baseScale = if (boxSize.width > 0 && boxSize.height > 0) {
+        max(
+            boxSize.width.toFloat() / bitmap.width.toFloat(),
+            boxSize.height.toFloat() / bitmap.height.toFloat()
+        )
+    } else 1f
+    val actualScale = baseScale * zoom
+    val displayWidthPx = bitmap.width * actualScale
+    val displayHeightPx = bitmap.height * actualScale
+    val maxOffsetX = max(0f, (displayWidthPx - boxSize.width) / 2f)
+    val maxOffsetY = max(0f, (displayHeightPx - boxSize.height) / 2f)
+    val clampedOffsetX = offsetX.coerceIn(-maxOffsetX, maxOffsetX)
+    val clampedOffsetY = offsetY.coerceIn(-maxOffsetY, maxOffsetY)
+
+    LaunchedEffect(bitmap, boxSize, zoom, clampedOffsetX, clampedOffsetY) {
+        if (boxSize.width > 0 && boxSize.height > 0) {
+            val imageLeft = boxSize.width / 2f - displayWidthPx / 2f + clampedOffsetX
+            val imageTop = boxSize.height / 2f - displayHeightPx / 2f + clampedOffsetY
+            val cropLeft = ((0f - imageLeft) / actualScale).roundToInt()
+            val cropTop = ((0f - imageTop) / actualScale).roundToInt()
+            val cropSize = (boxSize.width / actualScale).roundToInt()
+            onCropChanged(
+                CoverCrop(
+                    left = cropLeft,
+                    top = cropTop,
+                    size = cropSize
+                )
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(280.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .onSizeChanged { boxSize = it }
+            .pointerInput(bitmap, boxSize) {
+                detectTransformGestures { _, pan, gestureZoom, _ ->
+                    zoom = (zoom * gestureZoom).coerceIn(1f, 4f)
+                    offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                    offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (boxSize.width > 0 && boxSize.height > 0) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .size(
+                        width = with(density) { displayWidthPx.toDp() },
+                        height = with(density) { displayHeightPx.toDp() }
+                    )
+                    .offset {
+                        IntOffset(clampedOffsetX.roundToInt(), clampedOffsetY.roundToInt())
+                    }
+            )
         }
     }
 }

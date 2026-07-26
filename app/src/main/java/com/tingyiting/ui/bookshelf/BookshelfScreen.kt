@@ -14,8 +14,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,7 +26,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingyiting.playback.PlaybackInfo
-import com.tingyiting.ui.components.BookCover
+import com.tingyiting.ui.components.CoverArtwork
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -58,15 +56,6 @@ fun BookshelfScreen(
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("书架") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            )
-        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(
@@ -74,23 +63,6 @@ fun BookshelfScreen(
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
                 Icon(Icons.Default.Add, contentDescription = "添加书籍")
-            }
-        },
-        bottomBar = {
-            playbackInfo?.let { playing ->
-                val bookTitle = books
-                    .find { it.book.id == playing.bookId }?.book?.title
-                    ?: playing.trackTitle
-                MiniPlayerBar(
-                    bookTitle = bookTitle,
-                    trackTitle = playing.trackTitle,
-                    isPlaying = playing.isPlaying,
-                    progress = if (playing.duration > 0) {
-                        (playing.currentPosition.toFloat() / playing.duration).coerceIn(0f, 1f)
-                    } else 0f,
-                    onClick = { onNavigateToPlayer(playing.bookId) },
-                    onTogglePlay = viewModel::togglePlayPause
-                )
             }
         }
     ) { padding ->
@@ -259,67 +231,6 @@ fun BookshelfScreen(
     }
 }
 
-/** 底部迷你播放条：点击整条进播放页，右侧按钮直接暂停/继续。 */
-@Composable
-private fun MiniPlayerBar(
-    bookTitle: String,
-    trackTitle: String,
-    isPlaying: Boolean,
-    progress: Float,
-    onClick: () -> Unit,
-    onTogglePlay: () -> Unit
-) {
-    Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
-        Column(modifier = Modifier.clickable(onClick = onClick)) {
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                BookCover(
-                    title = bookTitle,
-                    modifier = Modifier.size(44.dp),
-                    fontSize = 20.sp
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = bookTitle,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = trackTitle.takeIf { it.isNotBlank() && it != bookTitle } ?: "正在播放",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                FilledIconButton(
-                    onClick = onTogglePlay,
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "暂停" else "播放"
-                    )
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
@@ -355,10 +266,11 @@ private fun BookCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BookCover(
+            CoverArtwork(
                 title = item.book.title,
+                coverUrl = item.book.coverUrl,
                 modifier = Modifier.size(if (isActive) 64.dp else 56.dp),
-                fontSize = if (isActive) 28.sp else 24.sp
+                fallbackFontSize = if (isActive) 28.sp else 24.sp
             )
 
             Spacer(modifier = Modifier.width(16.dp))

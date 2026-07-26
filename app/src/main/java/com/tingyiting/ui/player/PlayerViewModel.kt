@@ -1,11 +1,14 @@
 package com.tingyiting.ui.player
 
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tingyiting.data.model.CoverCrop
 import com.tingyiting.data.model.Book
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
+import com.tingyiting.data.repository.CoverRepository
 import com.tingyiting.playback.AudioPlayer
 import com.tingyiting.playback.PlayState
 import com.tingyiting.playback.PlayableItem
@@ -36,14 +39,18 @@ data class PlayerUiState(
     val currentTrackIndex: Int = 0,
     val trackCount: Int = 0,
     val trackTitle: String = "",
-    val tracks: List<Track> = emptyList()
+    val tracks: List<Track> = emptyList(),
+    val coverUrl: String = "",
+    val isCoverUpdating: Boolean = false,
+    val coverError: String? = null
 )
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val player: AudioPlayer,
-    private val playbackState: PlaybackState
+    private val playbackState: PlaybackState,
+    private val coverRepository: CoverRepository? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -128,7 +135,8 @@ class PlayerViewModel @Inject constructor(
             currentTrackIndex = index,
             trackCount = if (isPlaylist) tracks.size else 1,
             trackTitle = tracks.getOrNull(index)?.title ?: book.title,
-            tracks = updateTrackProgress(tracks, index, position, duration)
+            tracks = updateTrackProgress(tracks, index, position, duration),
+            coverUrl = book.coverUrl
         )
     }
 
@@ -147,6 +155,7 @@ class PlayerViewModel @Inject constructor(
                 currentPosition = startPosition,
                 duration = startTrack.duration,
                 tracks = tracks,
+                coverUrl = book.coverUrl,
                 isInitialLoading = false,
                 isBuffering = true,
                 error = null,
@@ -171,6 +180,7 @@ class PlayerViewModel @Inject constructor(
                 trackCount = 1,
                 trackTitle = book.title,
                 tracks = emptyList(),
+                coverUrl = book.coverUrl,
                 isInitialLoading = false,
                 isBuffering = true,
                 error = null,
@@ -375,6 +385,60 @@ class PlayerViewModel @Inject constructor(
     fun cancelSleepTimer() {
         sleepTimerJob?.cancel()
         _uiState.update { it.copy(sleepTimerRemaining = null) }
+    }
+
+    fun scrapeCoverFromDouban() {
+        val state = _uiState.value
+        if (state.bookId == 0L || state.isCoverUpdating) return
+        val repository = coverRepository ?: run {
+            _uiState.update { it.copy(coverError = "封面服务不可用") }
+            return
+        }
+        _uiState.update { it.copy(isCoverUpdating = true, coverError = null) }
+        viewModelScope.launch {
+            repository.scrapeFromDouban(state.bookId, state.title)
+                .onSuccess { coverUrl ->
+                    activeBook = activeBook?.copy(coverUrl = coverUrl)
+                    _uiState.update {
+                        it.copy(coverUrl = coverUrl, isCoverUpdating = false, coverError = null)
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isCoverUpdating = false,
+                            coverError = error.message ?: "封面搜刮失败"
+                        )
+                    }
+                }
+        }
+    }
+
+    fun importLocalCover(uri: Uri, crop: CoverCrop) {
+        val state = _uiState.value
+        if (state.bookId == 0L || state.isCoverUpdating) return
+        val repository = coverRepository ?: run {
+            _uiState.update { it.copy(coverError = "封面服务不可用") }
+            return
+        }
+        _uiState.update { it.copy(isCoverUpdating = true, coverError = null) }
+        viewModelScope.launch {
+            repository.importLocalCover(state.bookId, uri, crop)
+                .onSuccess { coverUrl ->
+                    activeBook = activeBook?.copy(coverUrl = coverUrl)
+                    _uiState.update {
+                        it.copy(coverUrl = coverUrl, isCoverUpdating = false, coverError = null)
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isCoverUpdating = false,
+                            coverError = error.message ?: "封面导入失败"
+                        )
+                    }
+                }
+        }
     }
 
     private fun persistTrackProgress(index: Int, position: Long, duration: Long) {

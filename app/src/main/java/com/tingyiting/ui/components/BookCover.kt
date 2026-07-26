@@ -44,10 +44,20 @@ fun BookCover(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = title.trim().firstOrNull()?.toString() ?: "听",
+            text = title.displayCoverText(),
             color = foreground,
             fontWeight = FontWeight.Bold,
             fontSize = fontSize
         )
     }
 }
+
+private fun String.displayCoverText(): String =
+    firstOrNull { it.isCjk() }?.toString()
+        ?: firstOrNull { it.isLetterOrDigit() }?.toString()
+        ?: "听"
+
+private fun Char.isCjk(): Boolean =
+    this in '\u4E00'..'\u9FFF' ||
+        this in '\u3400'..'\u4DBF' ||
+        this in '\uF900'..'\uFAFF'

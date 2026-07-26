@@ -60,11 +60,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        mediaSession?.run {
-            player.release()
-            release()
-            mediaSession = null
-        }
+        // ExoPlayer 是 Hilt Singleton，生命周期跟随应用进程。
+        // MediaSessionService 可能在休眠/后台后被系统销毁；如果这里 release 播放器，
+        // 前台 Activity/ViewModel 仍会持有同一个已释放实例，后续 play() 会发消息到 dead thread。
+        mediaSession?.release()
+        mediaSession = null
         super.onDestroy()
     }
 }
