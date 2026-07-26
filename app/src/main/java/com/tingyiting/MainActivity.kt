@@ -12,6 +12,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.compose.rememberNavController
 import com.tingyiting.service.PlaybackService
 import com.tingyiting.ui.navigation.AppNavigation
+import com.tingyiting.ui.theme.TingYiTingTheme
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -25,7 +26,7 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this, PlaybackService::class.java))
 
         setContent {
-            MaterialTheme {
+            TingYiTingTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

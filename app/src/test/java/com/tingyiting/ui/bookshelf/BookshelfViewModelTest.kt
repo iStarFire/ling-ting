@@ -9,6 +9,7 @@ import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.WebDavRepository
 import com.tingyiting.data.store.WebDavConfig
 import com.tingyiting.data.store.WebDavConfigStore
+import com.tingyiting.playback.FakeAudioPlayer
 import com.tingyiting.playback.PlaybackInfo
 import com.tingyiting.playback.PlaybackState
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,7 @@ class BookshelfViewModelTest {
     private lateinit var bookDao: FakeBookDao
     private lateinit var trackDao: FakeTrackDao
     private lateinit var playbackState: FakePlaybackState
+    private lateinit var player: FakeAudioPlayer
     private lateinit var viewModel: BookshelfViewModel
 
     @Before
@@ -47,10 +49,12 @@ class BookshelfViewModelTest {
         bookDao = FakeBookDao()
         trackDao = FakeTrackDao()
         playbackState = FakePlaybackState()
+        player = FakeAudioPlayer()
         viewModel = BookshelfViewModel(
             bookRepository = BookRepository(bookDao, trackDao),
             webDavRepository = WebDavRepository(NoOpConfigStore),
             playbackState = playbackState,
+            player = player,
             context = Mockito.mock(Context::class.java)
         )
     }
@@ -151,6 +155,18 @@ class BookshelfViewModelTest {
         playbackState.flow.value = info
 
         assertEquals(info, viewModel.playbackInfo.value)
+    }
+
+    @Test
+    fun togglePlayPause_togglesPlayerPlayback() {
+        // 播放中 → 暂停
+        player.playWhenReady = true
+        viewModel.togglePlayPause()
+        assertEquals(1, player.pauseCount)
+
+        // 已暂停 → 继续播放
+        viewModel.togglePlayPause()
+        assertEquals(1, player.playCount)
     }
 
     /** books 为 WhileSubscribed 的 StateFlow，需要先订阅再取值。 */

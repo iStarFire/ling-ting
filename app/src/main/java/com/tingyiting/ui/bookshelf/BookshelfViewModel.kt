@@ -10,6 +10,7 @@ import com.tingyiting.data.model.Book
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.WebDavRepository
+import com.tingyiting.playback.AudioPlayer
 import com.tingyiting.playback.PlaybackInfo
 import com.tingyiting.playback.PlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -40,6 +41,7 @@ class BookshelfViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val webDavRepository: WebDavRepository,
     playbackState: PlaybackState,
+    private val player: AudioPlayer,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -87,6 +89,11 @@ class BookshelfViewModel @Inject constructor(
         viewModelScope.launch {
             bookRepository.deleteBook(bookId)
         }
+    }
+
+    /** 迷你播放条的播放/暂停切换。 */
+    fun togglePlayPause() {
+        if (player.playWhenReady) player.pause() else player.play()
     }
 
     /**

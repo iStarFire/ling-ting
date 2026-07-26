@@ -25,15 +25,15 @@ import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Equalizer
-import androidx.compose.material.icons.filled.Forward
-import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -65,8 +65,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tingyiting.ui.components.BookCover
 
 private const val LOADING_OVERLAY_ALPHA = 0.45f
 private const val SEEK_INTERVAL_MS = 15_000L
@@ -124,36 +126,33 @@ fun PlayerScreen(
             ) {
                 if (!isLandscape) {
                     Artwork(
+                        title = state.title,
                         showLoading = state.isInitialLoading || state.isBuffering,
-                        modifier = Modifier.size(250.dp)
+                        modifier = Modifier.size(260.dp)
                     )
                 }
 
-                Text(
-                    text = state.title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = if (isLandscape) 0.dp else 16.dp)
-                )
-
-                if (state.isPlaylist) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "第 ${state.currentTrackIndex + 1} / ${state.trackCount} 集",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = state.trackTitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = state.title,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = if (isLandscape) 0.dp else 16.dp)
                     )
+                    if (state.isPlaylist) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = state.trackTitle,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 state.error?.let {
@@ -181,19 +180,48 @@ fun PlayerScreen(
                         }
                         draggedFraction = null
                     },
-                    onSeekBack = { viewModel.seekBy(-SEEK_INTERVAL_MS) },
-                    onSeekForward = { viewModel.seekBy(SEEK_INTERVAL_MS) },
                     enabled = !state.isInitialLoading && state.error == null
                 )
 
                 PlaybackControls(
                     state = state,
-                    onSleepTimer = { showSleepTimerDialog = true },
                     onPrevious = viewModel::prevTrack,
+                    onSeekBack = { viewModel.seekBy(-SEEK_INTERVAL_MS) },
                     onPlayPause = viewModel::togglePlayPause,
-                    onNext = viewModel::nextTrack,
-                    onShowTracks = { if (state.isPlaylist) showTrackSheet = true }
+                    onSeekForward = { viewModel.seekBy(SEEK_INTERVAL_MS) },
+                    onNext = viewModel::nextTrack
                 )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AssistChip(
+                        onClick = { showSleepTimerDialog = true },
+                        label = {
+                            Text(state.sleepTimerRemaining?.let { "$it 分钟后停止" } ?: "定时")
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (state.sleepTimerRemaining != null) {
+                                    Icons.Default.Bedtime
+                                } else Icons.Default.Timer,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                    if (state.isPlaylist) {
+                        AssistChip(
+                            onClick = { showTrackSheet = true },
+                            label = { Text("选集 ${state.currentTrackIndex + 1}/${state.trackCount}") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                    }
+                }
             }
         }
     }
@@ -284,23 +312,21 @@ fun PlayerScreen(
 }
 
 @Composable
-private fun Artwork(showLoading: Boolean, modifier: Modifier = Modifier) {
+private fun Artwork(title: String, showLoading: Boolean, modifier: Modifier = Modifier) {
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.primaryContainer),
+        modifier = modifier.clip(RoundedCornerShape(28.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = Icons.Default.Headphones,
-            contentDescription = null,
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.onPrimaryContainer
+        BookCover(
+            title = title,
+            modifier = Modifier.fillMaxSize(),
+            cornerRadius = 28.dp,
+            fontSize = 96.sp
         )
         if (showLoading) {
             Box(
                 modifier = Modifier
-                    .matchParentSize()
+                    .fillMaxSize()
                     .background(Color.Black.copy(alpha = LOADING_OVERLAY_ALPHA)),
                 contentAlignment = Alignment.Center
             ) {
@@ -317,8 +343,6 @@ private fun PlaybackProgress(
     draggedFraction: Float?,
     onFractionChange: (Float) -> Unit,
     onSeekFinished: () -> Unit,
-    onSeekBack: () -> Unit,
-    onSeekForward: () -> Unit,
     enabled: Boolean
 ) {
     val playerFraction = if (duration > 0) {
@@ -330,29 +354,15 @@ private fun PlaybackProgress(
     } else currentPosition
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SeekButton(
-                forward = false,
-                onClick = onSeekBack,
-                enabled = enabled && displayedPosition > 0
-            )
-            Slider(
-                value = displayedFraction,
-                onValueChange = onFractionChange,
-                onValueChangeFinished = onSeekFinished,
-                enabled = enabled && duration > 0,
-                modifier = Modifier.weight(1f)
-            )
-            SeekButton(
-                forward = true,
-                onClick = onSeekForward,
-                enabled = enabled && duration > 0 && displayedPosition < duration
-            )
-        }
+        Slider(
+            value = displayedFraction,
+            onValueChange = onFractionChange,
+            onValueChangeFinished = onSeekFinished,
+            enabled = enabled && duration > 0,
+            modifier = Modifier.fillMaxWidth()
+        )
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 52.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
@@ -370,52 +380,43 @@ private fun PlaybackProgress(
 }
 
 @Composable
-private fun SeekButton(forward: Boolean, onClick: () -> Unit, enabled: Boolean) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(52.dp)) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = if (forward) Icons.Default.Forward else Icons.Default.Replay,
-                contentDescription = if (forward) "快进15秒" else "快退15秒",
-                modifier = Modifier.size(32.dp)
-            )
-            Text(text = "15", style = MaterialTheme.typography.labelSmall)
-        }
-    }
-}
-
-@Composable
 private fun PlaybackControls(
     state: PlayerUiState,
-    onSleepTimer: () -> Unit,
     onPrevious: () -> Unit,
+    onSeekBack: () -> Unit,
     onPlayPause: () -> Unit,
-    onNext: () -> Unit,
-    onShowTracks: () -> Unit
+    onSeekForward: () -> Unit,
+    onNext: () -> Unit
 ) {
+    val controlsEnabled = !state.isInitialLoading && state.error == null
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
         modifier = Modifier.fillMaxWidth()
     ) {
-        IconButton(onClick = onSleepTimer) {
-            Icon(
-                imageVector = if (state.sleepTimerRemaining != null) Icons.Default.Bedtime else Icons.Default.Timer,
-                contentDescription = "睡眠定时器",
-                tint = if (state.sleepTimerRemaining != null) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface
-            )
-        }
         if (state.isPlaylist) {
-            Spacer(modifier = Modifier.width(8.dp))
             IconButton(onClick = onPrevious, enabled = state.currentTrackIndex > 0) {
-                Icon(Icons.Default.SkipPrevious, contentDescription = "上一集")
+                Icon(
+                    Icons.Default.SkipPrevious,
+                    contentDescription = "上一集",
+                    modifier = Modifier.size(32.dp)
+                )
             }
-            Spacer(modifier = Modifier.width(8.dp))
+        }
+        IconButton(
+            onClick = onSeekBack,
+            enabled = controlsEnabled && state.currentPosition > 0
+        ) {
+            Icon(
+                Icons.Default.FastRewind,
+                contentDescription = "快退15秒",
+                modifier = Modifier.size(32.dp)
+            )
         }
         FilledIconButton(
             onClick = onPlayPause,
-            enabled = !state.isInitialLoading && state.error == null,
-            modifier = Modifier.size(72.dp),
+            enabled = controlsEnabled,
+            modifier = Modifier.size(80.dp),
             colors = IconButtonDefaults.filledIconButtonColors(
                 containerColor = MaterialTheme.colorScheme.primary
             )
@@ -423,23 +424,27 @@ private fun PlaybackControls(
             Icon(
                 imageVector = if (state.playWhenReady) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = if (state.playWhenReady) "暂停" else "播放",
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(40.dp)
+            )
+        }
+        IconButton(
+            onClick = onSeekForward,
+            enabled = controlsEnabled && state.duration > 0 && state.currentPosition < state.duration
+        ) {
+            Icon(
+                Icons.Default.FastForward,
+                contentDescription = "快进15秒",
+                modifier = Modifier.size(32.dp)
             )
         }
         if (state.isPlaylist) {
-            Spacer(modifier = Modifier.width(8.dp))
             IconButton(onClick = onNext, enabled = state.currentTrackIndex < state.trackCount - 1) {
-                Icon(Icons.Default.SkipNext, contentDescription = "下一集")
+                Icon(
+                    Icons.Default.SkipNext,
+                    contentDescription = "下一集",
+                    modifier = Modifier.size(32.dp)
+                )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-        }
-        IconButton(onClick = onShowTracks, enabled = state.isPlaylist) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                contentDescription = "选集",
-                tint = if (state.isPlaylist) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-            )
         }
     }
 }

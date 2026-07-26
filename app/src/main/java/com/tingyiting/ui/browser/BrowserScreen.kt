@@ -52,11 +52,12 @@ fun BrowserScreen(
         topBar = {
             TopAppBar(
                 title = {
+                    // 只显示当前文件夹名，完整路径噪音大
                     Text(
                         text = if (state.selectedPaths.isNotEmpty())
                             "已选择 ${state.selectedPaths.size} 个目录"
                         else
-                            state.currentPath,
+                            state.currentPath.trimEnd('/').substringAfterLast('/').ifEmpty { "网盘文件" },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -150,11 +151,20 @@ fun BrowserScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "该目录下没有音频文件",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.FolderOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "该目录下没有音频文件",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 else -> {
@@ -163,6 +173,17 @@ fun BrowserScreen(
                         contentPadding = PaddingValues(8.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
+                        // 长按多选不易被发现，列表顶部给出一次性提示
+                        if (!selecting && state.files.any { it.isDirectory }) {
+                            item(key = "hint") {
+                                Text(
+                                    text = "提示：长按目录可多选批量导入",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                         items(state.files, key = { it.path }) { file ->
                             FileItem(
                                 file = file,

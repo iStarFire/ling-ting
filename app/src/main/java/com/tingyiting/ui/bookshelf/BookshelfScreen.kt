@@ -12,9 +12,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,9 +24,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingyiting.playback.PlaybackInfo
+import com.tingyiting.ui.components.BookCover
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,6 +74,23 @@ fun BookshelfScreen(
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
                 Icon(Icons.Default.Add, contentDescription = "添加书籍")
+            }
+        },
+        bottomBar = {
+            playbackInfo?.let { playing ->
+                val bookTitle = books
+                    .find { it.book.id == playing.bookId }?.book?.title
+                    ?: playing.trackTitle
+                MiniPlayerBar(
+                    bookTitle = bookTitle,
+                    trackTitle = playing.trackTitle,
+                    isPlaying = playing.isPlaying,
+                    progress = if (playing.duration > 0) {
+                        (playing.currentPosition.toFloat() / playing.duration).coerceIn(0f, 1f)
+                    } else 0f,
+                    onClick = { onNavigateToPlayer(playing.bookId) },
+                    onTogglePlay = viewModel::togglePlayPause
+                )
             }
         }
     ) { padding ->
@@ -239,6 +259,67 @@ fun BookshelfScreen(
     }
 }
 
+/** 底部迷你播放条：点击整条进播放页，右侧按钮直接暂停/继续。 */
+@Composable
+private fun MiniPlayerBar(
+    bookTitle: String,
+    trackTitle: String,
+    isPlaying: Boolean,
+    progress: Float,
+    onClick: () -> Unit,
+    onTogglePlay: () -> Unit
+) {
+    Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
+        Column(modifier = Modifier.clickable(onClick = onClick)) {
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BookCover(
+                    title = bookTitle,
+                    modifier = Modifier.size(44.dp),
+                    fontSize = 20.sp
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = bookTitle,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = trackTitle.takeIf { it.isNotBlank() && it != bookTitle } ?: "正在播放",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                FilledIconButton(
+                    onClick = onTogglePlay,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "暂停" else "播放"
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
@@ -247,7 +328,6 @@ private fun BookCard(
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var showDelete by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     val isActive = playing != null
 
@@ -257,10 +337,8 @@ private fun BookCard(
             .animateContentSize()
             .then(if (isActive) Modifier.heightIn(min = 132.dp) else Modifier)
             .combinedClickable(
-                onClick = {
-                    if (showDelete) showDelete = false else onClick()
-                },
-                onLongClick = { showDelete = true }
+                onClick = onClick,
+                onLongClick = { showDeleteConfirm = true }
             ),
         colors = CardDefaults.cardColors(
             containerColor = if (isActive) {
@@ -277,11 +355,10 @@ private fun BookCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.Headphones,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(if (isActive) 48.dp else 40.dp)
+            BookCover(
+                title = item.book.title,
+                modifier = Modifier.size(if (isActive) 64.dp else 56.dp),
+                fontSize = if (isActive) 28.sp else 24.sp
             )
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -308,27 +385,12 @@ private fun BookCard(
                 Spacer(modifier = Modifier.height(6.dp))
                 BookCardContent(item = item, playing = playing)
             }
-
-            if (showDelete) {
-                IconButton(
-                    onClick = { showDeleteConfirm = true }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "删除",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
         }
     }
 
     if (showDeleteConfirm) {
         AlertDialog(
-            onDismissRequest = {
-                showDeleteConfirm = false
-                showDelete = false
-            },
+            onDismissRequest = { showDeleteConfirm = false },
             title = { Text("删除书籍") },
             text = { Text("确定要删除《${item.book.title}》吗？") },
             confirmButton = {
@@ -336,19 +398,13 @@ private fun BookCard(
                     onClick = {
                         onDelete()
                         showDeleteConfirm = false
-                        showDelete = false
                     }
                 ) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        showDeleteConfirm = false
-                        showDelete = false
-                    }
-                ) {
+                TextButton(onClick = { showDeleteConfirm = false }) {
                     Text("取消")
                 }
             }
@@ -388,7 +444,7 @@ private fun BookCardContent(item: BookItem, playing: PlaybackInfo?) {
         )
         Spacer(modifier = Modifier.height(4.dp))
         LinearProgressIndicator(
-            progress = progress,
+            progress = { progress },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(4.dp),
