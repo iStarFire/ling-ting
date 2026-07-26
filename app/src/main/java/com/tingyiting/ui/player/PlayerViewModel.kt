@@ -1,6 +1,7 @@
 package com.tingyiting.ui.player
 
 import androidx.lifecycle.ViewModel
+import android.util.Log
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -10,6 +11,7 @@ import com.tingyiting.data.model.Book
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.WebDavRepository
+import com.tingyiting.playback.PlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -39,7 +41,9 @@ data class PlayerUiState(
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     private val bookRepository: BookRepository,
-    private val webDavRepository: WebDavRepository
+    private val webDavRepository: WebDavRepository,
+    private val player: ExoPlayer,
+    private val playbackState: PlaybackState
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -47,60 +51,133 @@ class PlayerViewModel @Inject constructor(
 
     private var progressSaveJob: Job? = null
     private var sleepTimerJob: Job? = null
-    private var player: ExoPlayer? = null
 
-    fun initialize(player: ExoPlayer, bookId: Long) {
-        this.player = player
+    private companion object {
+        const val TAG = "PlayerViewModel"
+    }
+
+    fun initialize(bookId: Long) {
+        _uiState.update { it.copy(isLoading = true, error = null) }
 
         viewModelScope.launch {
-            val book = bookRepository.getBookById(bookId)
-            if (book == null) {
-                _uiState.update { it.copy(error = "书籍未找到", isLoading = false) }
-                return@launch
-            }
+            try {
+                val book = bookRepository.getBookById(bookId)
+                if (book == null) {
+                    Log.w(TAG, "加载书籍失败：书籍未找到 bookId=$bookId")
+                    _uiState.update { it.copy(error = "书籍未找到", isLoading = false) }
+                    return@launch
+                }
 
-            val tracks = bookRepository.getTracks(bookId)
-
-            if (tracks.isEmpty()) {
-                // 旧单文件书籍：回退到原有单 URL 逻辑
-                playSingleFile(player, book)
-                return@launch
-            }
-
-            // 多集有声剧：以播放列表承载（鉴权已在 ExoPlayer 的 MediaSourceFactory 中处理）
-            val startIndex = book.currentTrackIndex.coerceIn(0, tracks.lastIndex)
-            val startPosition = tracks[startIndex].position.coerceAtLeast(0)
-
-            val mediaItems = tracks.map { track ->
-                MediaItem.Builder()
-                    .setUri(track.webdavUrl)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder().setTitle(track.title).build()
-                    )
-                    .build()
-            }
-
-            player.setMediaItems(mediaItems, startIndex, startPosition)
-            player.addListener(playlistListener)
-            player.prepare()
-            player.play()
-
-            _uiState.update {
-                it.copy(
-                    bookId = book.id,
-                    title = book.title,
-                    isPlaylist = true,
-                    trackCount = tracks.size,
-                    currentTrackIndex = startIndex,
-                    trackTitle = tracks[startIndex].title,
-                    tracks = tracks,
-                    isLoading = false
+                // 目录导入书：rootPath 非空；单文件书：webdavUrl 非空。
+                val isDirectoryBook = book.rootPath.isNotEmpty()
+                val tracks = bookRepository.getTracks(bookId)
+                Log.d(
+                    TAG,
+                    "加载书籍 bookId=${book.id} title=${book.title} " +
+                        "是否目录书=$isDirectoryBook track数量=${tracks.size}"
                 )
-            }
 
-            startProgressSaver(book.id)
-            startPositionLoop()
+                if (isDirectoryBook) {
+                    // 目录导入书必须依赖 tracks 构建播放列表，绝不能回退到 webdavUrl（目录书 webdavUrl 为空）。
+                    if (tracks.isEmpty()) {
+                        Log.e(
+                            TAG,
+                            "目录书无曲目，无法播放 bookId=${book.id} rootPath=${book.rootPath} " +
+                                "是否目录书=true track数量=0 失败原因=目录书没有可播放的音频"
+                        )
+                        _uiState.update {
+                            it.copy(
+                                bookId = book.id,
+                                title = book.title,
+                                error = "该目录书没有可播放的音频",
+                                isLoading = false
+                            )
+                        }
+                        return@launch
+                    }
+                    val emptyUrlCount = tracks.count { it.webdavUrl.isEmpty() }
+                    if (emptyUrlCount > 0) {
+                        Log.w(
+                            TAG,
+                            "目录书存在空地址曲目 bookId=${book.id} 是否目录书=true " +
+                                "track数量=${tracks.size} 空地址数量=$emptyUrlCount"
+                        )
+                    }
+                    buildPlaylist(player, book, tracks)
+                    return@launch
+                }
+
+                // 单文件书籍：若已有关联曲目则走播放列表，否则用单个 webdavUrl。
+                if (tracks.isNotEmpty()) {
+                    buildPlaylist(player, book, tracks)
+                    return@launch
+                }
+
+                if (book.webdavUrl.isEmpty()) {
+                    Log.e(
+                        TAG,
+                        "单文件书无播放地址 bookId=${book.id} 是否目录书=false " +
+                            "track数量=0 失败原因=webdavUrl 为空"
+                    )
+                    _uiState.update {
+                        it.copy(
+                            bookId = book.id,
+                            title = book.title,
+                            error = "该书没有可播放的音频地址",
+                            isLoading = false
+                        )
+                    }
+                    return@launch
+                }
+
+                playSingleFile(player, book)
+            } catch (e: Exception) {
+                Log.e(TAG, "加载书籍异常 bookId=$bookId", e)
+                _uiState.update {
+                    it.copy(
+                        error = "加载失败：${e.message ?: e.javaClass.simpleName}",
+                        isLoading = false
+                    )
+                }
+            }
         }
+    }
+
+    private fun buildPlaylist(player: ExoPlayer, book: Book, tracks: List<Track>) {
+        val startIndex = book.currentTrackIndex.coerceIn(0, tracks.lastIndex)
+        val startPosition = tracks[startIndex].position.coerceAtLeast(0)
+
+        val mediaItems = tracks.map { track ->
+            MediaItem.Builder()
+                .setUri(track.webdavUrl)
+                .setMediaMetadata(
+                    MediaMetadata.Builder().setTitle(track.title).build()
+                )
+                .build()
+        }
+
+        player.setMediaItems(mediaItems, startIndex, startPosition)
+        player.addListener(playlistListener)
+        player.prepare()
+        player.play()
+
+        playbackState.setCurrentBook(book.id, tracks.size)
+
+        _uiState.update {
+            it.copy(
+                bookId = book.id,
+                title = book.title,
+                isPlaylist = true,
+                trackCount = tracks.size,
+                currentTrackIndex = startIndex,
+                trackTitle = tracks[startIndex].title,
+                tracks = tracks,
+                isLoading = false
+            )
+        }
+
+        startProgressSaver(book.id)
+        startPositionLoop()
     }
 
     private fun playSingleFile(
@@ -130,6 +207,8 @@ class PlayerViewModel @Inject constructor(
         player.play()
 
         player.addListener(singleFileListener)
+
+        playbackState.setCurrentBook(book.id, 1)
 
         startProgressSaver(book.id)
         startPositionLoop()

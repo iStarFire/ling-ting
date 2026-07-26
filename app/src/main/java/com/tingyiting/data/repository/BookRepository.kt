@@ -79,6 +79,11 @@ open class BookRepository @Inject constructor(
     suspend fun getTracks(bookId: Long): List<Track> =
         trackDao.getByBookId(bookId).map { it.toTrack() }
 
+    open suspend fun getTrackCount(bookId: Long): Int = trackDao.countByBookId(bookId)
+
+    open suspend fun getTrackByIndex(bookId: Long, index: Int): Track? =
+        trackDao.getByIndex(bookId, index)?.toTrack()
+
     fun observeTracks(bookId: Long): Flow<List<Track>> =
         trackDao.observeByBookId(bookId).map { list -> list.map { it.toTrack() } }
 

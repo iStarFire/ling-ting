@@ -19,6 +19,9 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE bookId = :bookId AND trackIndex = :index LIMIT 1")
     suspend fun getByIndex(bookId: Long, index: Int): TrackEntity?
 
+    @Query("SELECT COUNT(*) FROM tracks WHERE bookId = :bookId")
+    suspend fun countByBookId(bookId: Long): Int
+
     @Query(
         "UPDATE tracks SET position = :position, duration = :duration " +
             "WHERE bookId = :bookId AND trackIndex = :index"

@@ -6,6 +6,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.tingyiting.data.repository.WebDavRepository
 import com.tingyiting.network.DynamicAuthDataSourceFactory
+import com.tingyiting.playback.ExoPlaybackState
+import com.tingyiting.playback.PlaybackState
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -33,4 +35,8 @@ object AppModule {
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
     }
+
+    @Provides
+    @Singleton
+    fun providePlaybackState(player: ExoPlayer): PlaybackState = ExoPlaybackState(player)
 }

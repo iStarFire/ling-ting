@@ -1,6 +1,9 @@
 package com.tingyiting.ui.bookshelf
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,7 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.tingyiting.data.model.Book
+import com.tingyiting.playback.PlaybackInfo
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -35,6 +38,7 @@ fun BookshelfScreen(
     viewModel: BookshelfViewModel = hiltViewModel()
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
+    val playbackInfo by viewModel.playbackInfo.collectAsStateWithLifecycle()
     val isConfigured by viewModel.isConfigured.collectAsStateWithLifecycle()
 
     var showImportSheet by remember { mutableStateOf(false) }
@@ -145,11 +149,14 @@ fun BookshelfScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(books, key = { it.id }) { book ->
+                        items(books, key = { it.book.id }) { item ->
+                            // 仅当前播放的卡片拿到非空 playing，其余卡片稳定为 null 不随轮询重组
+                            val playing = playbackInfo?.takeIf { it.bookId == item.book.id }
                             BookCard(
-                                book = book,
-                                onClick = { onNavigateToPlayer(book.id) },
-                                onDelete = { viewModel.deleteBook(book.id) }
+                                item = item,
+                                playing = playing,
+                                onClick = { onNavigateToPlayer(item.book.id) },
+                                onDelete = { viewModel.deleteBook(item.book.id) }
                             )
                         }
                     }
@@ -232,19 +239,37 @@ fun BookshelfScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
-    book: Book,
+    item: BookItem,
+    playing: PlaybackInfo?,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
+    var showDelete by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    val isActive = playing != null
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .animateContentSize()
+            .then(if (isActive) Modifier.heightIn(min = 132.dp) else Modifier)
+            .combinedClickable(
+                onClick = {
+                    if (showDelete) showDelete = false else onClick()
+                },
+                onLongClick = { showDelete = true }
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isActive) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isActive) 6.dp else 2.dp)
     ) {
         Row(
             modifier = Modifier
@@ -256,20 +281,20 @@ private fun BookCard(
                 imageVector = Icons.Default.Headphones,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(40.dp)
+                modifier = Modifier.size(if (isActive) 48.dp else 40.dp)
             )
 
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = book.title,
+                    text = item.book.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                book.author.let {
+                item.book.author.let {
                     if (it.isNotBlank()) {
                         Text(
                             text = it,
@@ -280,39 +305,50 @@ private fun BookCard(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                BookCardContent(book)
+                Spacer(modifier = Modifier.height(6.dp))
+                BookCardContent(item = item, playing = playing)
             }
 
-            IconButton(
-                onClick = { showDeleteConfirm = true }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.error
-                )
+            if (showDelete) {
+                IconButton(
+                    onClick = { showDeleteConfirm = true }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }
 
     if (showDeleteConfirm) {
         AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
+            onDismissRequest = {
+                showDeleteConfirm = false
+                showDelete = false
+            },
             title = { Text("删除书籍") },
-            text = { Text("确定要删除《${book.title}》吗？") },
+            text = { Text("确定要删除《${item.book.title}》吗？") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onDelete()
                         showDeleteConfirm = false
+                        showDelete = false
                     }
                 ) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        showDelete = false
+                    }
+                ) {
                     Text("取消")
                 }
             }
@@ -320,11 +356,37 @@ private fun BookCard(
     }
 }
 
+/**
+ * 卡片底部信息区：
+ * - 当前集名称（正在播放时取播放器实时标题，否则取上次保存的当前集）
+ * - 自动更新的进度条
+ * - 左：当前时长 / 总时长；右：当前集 / 总集数（如 3/600）
+ */
 @Composable
-private fun BookCardContent(book: Book) {
-    val progress = if (book.duration > 0) book.position.toFloat() / book.duration.toFloat() else 0f
+private fun BookCardContent(item: BookItem, playing: PlaybackInfo?) {
+    val trackTitle = playing?.trackTitle?.takeIf { it.isNotBlank() } ?: item.currentTrackTitle
+    val position = playing?.currentPosition ?: item.savedPosition
+    val duration = playing?.duration?.takeIf { it > 0 } ?: item.savedDuration
+    val currentIndex = playing?.let { it.currentTrackIndex + 1 } ?: item.currentIndex
+    val trackCount = playing?.trackCount?.takeIf { it > 0 } ?: item.trackCount
+    val progress = if (duration > 0) {
+        (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    } else 0f
 
     Column {
+        Text(
+            text = trackTitle,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (playing != null) FontWeight.Medium else FontWeight.Normal,
+            color = if (playing != null) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(4.dp))
         LinearProgressIndicator(
             progress = progress,
             modifier = Modifier
@@ -333,20 +395,33 @@ private fun BookCardContent(book: Book) {
             color = MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = formatProgress(book.position, book.duration),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "${formatTime(position)} / ${formatTime(duration)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "$currentIndex/$trackCount",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
     }
 }
 
-private fun formatProgress(position: Long, duration: Long): String {
-    val pos = position / 1000
-    val dur = duration / 1000
-    val posMin = pos / 60
-    val posSec = pos % 60
-    val durMin = dur / 60
-    val durSec = dur % 60
-    return String.format("%02d:%02d / %02d:%02d", posMin, posSec, durMin, durSec)
+private fun formatTime(millis: Long): String {
+    val totalSec = (millis / 1000).coerceAtLeast(0)
+    val hours = totalSec / 3600
+    val minutes = (totalSec % 3600) / 60
+    val seconds = totalSec % 60
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
+    }
 }

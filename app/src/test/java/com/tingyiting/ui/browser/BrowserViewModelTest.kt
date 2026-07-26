@@ -193,6 +193,7 @@ class BrowserViewModelTest {
             override suspend fun getByBookId(bookId: Long): List<TrackEntity> = emptyList()
             override fun observeByBookId(bookId: Long): Flow<List<TrackEntity>> = emptyFlow()
             override suspend fun getByIndex(bookId: Long, index: Int): TrackEntity? = null
+            override suspend fun countByBookId(bookId: Long): Int = 0
             override suspend fun updateProgress(bookId: Long, index: Int, position: Long, duration: Long) {}
             override suspend fun deleteByBookId(bookId: Long) {}
         }

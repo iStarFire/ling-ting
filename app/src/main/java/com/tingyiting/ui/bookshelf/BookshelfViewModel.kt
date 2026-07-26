@@ -10,6 +10,8 @@ import com.tingyiting.data.model.Book
 import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.WebDavRepository
+import com.tingyiting.playback.PlaybackInfo
+import com.tingyiting.playback.PlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,15 +21,59 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * 书架列表项：在 Book 基础上补充集数与当前集信息。
+ * 单文件书（无 tracks）按 1 集处理。
+ */
+data class BookItem(
+    val book: Book,
+    val trackCount: Int,
+    /** 1-based 当前集序号 */
+    val currentIndex: Int,
+    val currentTrackTitle: String,
+    val savedPosition: Long,
+    val savedDuration: Long
+)
+
 @HiltViewModel
 class BookshelfViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val webDavRepository: WebDavRepository,
+    playbackState: PlaybackState,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    val books: StateFlow<List<Book>> = bookRepository.getAllBooks()
+    val books: StateFlow<List<BookItem>> = bookRepository.getAllBooks()
+        .map { list -> list.map { toBookItem(it) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 当前正在播放的实时信息（后台播放期间由 PlaybackState 每 500ms 刷新）。 */
+    val playbackInfo: StateFlow<PlaybackInfo?> = playbackState.info
+
+    private suspend fun toBookItem(book: Book): BookItem {
+        val trackCount = bookRepository.getTrackCount(book.id)
+        if (trackCount <= 0) {
+            // 单文件书：无 tracks，按 1 集处理
+            return BookItem(
+                book = book,
+                trackCount = 1,
+                currentIndex = 1,
+                currentTrackTitle = book.title,
+                savedPosition = book.position,
+                savedDuration = book.duration
+            )
+        }
+        val index = book.currentTrackIndex.coerceIn(0, trackCount - 1)
+        val currentTrack = bookRepository.getTrackByIndex(book.id, index)
+        return BookItem(
+            book = book,
+            trackCount = trackCount,
+            currentIndex = index + 1,
+            currentTrackTitle = currentTrack?.title ?: book.title,
+            savedPosition = currentTrack?.position ?: book.position,
+            savedDuration = currentTrack?.duration ?: book.duration
+        )
+    }
 
     val isConfigured: StateFlow<Boolean> = webDavRepository.configFlow
         .map { it != null }
