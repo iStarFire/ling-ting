@@ -7,14 +7,20 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.tingyiting.MainActivity
+import com.tingyiting.R
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class PlaybackService : MediaSessionService() {
+
+    companion object {
+        private const val CHANNEL_ID = "playback_channel"
+    }
 
     private var mediaSession: MediaSession? = null
 
@@ -22,6 +28,14 @@ class PlaybackService : MediaSessionService() {
     lateinit var player: ExoPlayer
 
     override fun onCreate() {
+        // 配置媒体通知提供器：返回桌面后展示状态栏（灵动岛）媒体胶囊，并在锁屏展示媒体控件。
+        // 需在 super.onCreate() 前设置，使 MediaSessionService 在通知更新时使用自定义通道与图标。
+        val provider = DefaultMediaNotificationProvider.Builder(this)
+            .setChannelId(CHANNEL_ID)
+            .setChannelName(R.string.notification_channel_name)
+            .build()
+        provider.setSmallIcon(R.drawable.media3_notification_small_icon)
+        setMediaNotificationProvider(provider)
         super.onCreate()
         initializePlayerAndSession()
     }

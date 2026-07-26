@@ -35,6 +35,10 @@ data class PlayerUiState(
     val error: String? = null,
     val playbackError: String? = null,
     val sleepTimerRemaining: Int? = null,
+    /** 按集数定时剩余集数（null = 未启用）。 */
+    val sleepTimerEpisodesRemaining: Int? = null,
+    /** 上次用户选择的定时设置（用于抽屉顶部"上次定时"行，可一键恢复）。 */
+    val lastTimerChoice: TimerChoice? = null,
     val isPlaylist: Boolean = false,
     val currentTrackIndex: Int = 0,
     val trackCount: Int = 0,
@@ -42,7 +46,15 @@ data class PlayerUiState(
     val tracks: List<Track> = emptyList(),
     val coverUrl: String = "",
     val isCoverUpdating: Boolean = false,
-    val coverError: String? = null
+    val coverError: String? = null,
+    /** 是否启用片头跳过。 */
+    val introSkipEnabled: Boolean = false,
+    /** 片头跳过秒数（0-180）。 */
+    val introSkipSeconds: Int = 0,
+    val introSkipHistory: List<Int> = emptyList(),
+    val outroSkipEnabled: Boolean = false,
+    val outroSkipSeconds: Int = 0,
+    val outroSkipHistory: List<Int> = emptyList()
 )
 
 @HiltViewModel
@@ -50,7 +62,8 @@ class PlayerViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val player: AudioPlayer,
     private val playbackState: PlaybackState,
-    private val coverRepository: CoverRepository? = null
+    private val coverRepository: CoverRepository? = null,
+    private val sleepTimerPrefs: SleepTimerPrefs? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -66,10 +79,23 @@ class PlayerViewModel @Inject constructor(
     private var activeBook: Book? = null
     private var activeTracks: List<Track> = emptyList()
 
+    /** 按集数定时剩余集数；为 0 表示未启用。 */
+    private var episodesRemaining: Int = 0
+
     fun initialize(bookId: Long) {
         if (bookId == 0L || (initializeJob?.isActive == true && _uiState.value.bookId == bookId)) return
         initializeJob?.cancel()
-        _uiState.update { it.copy(bookId = bookId, isInitialLoading = true, error = null) }
+        // 切换书籍前先停掉旧定时（避免集数计数与新书混在一起）
+        cancelSleepTimerInternal()
+        val lastChoice = sleepTimerPrefs?.resolveForBook(bookId)
+        _uiState.update {
+            it.copy(
+                bookId = bookId,
+                isInitialLoading = true,
+                error = null,
+                lastTimerChoice = lastChoice
+            )
+        }
 
         initializeJob = viewModelScope.launch {
             try {
@@ -122,28 +148,37 @@ class PlayerViewModel @Inject constructor(
         val isPlaylist = tracks.isNotEmpty()
         val duration = validDuration(player.duration, tracks.getOrNull(index)?.duration ?: book.duration)
         val position = player.currentPosition.coerceAtLeast(0)
-        _uiState.value = PlayerUiState(
-            bookId = book.id,
-            title = book.title,
-            isPlaying = player.isPlaying,
-            playWhenReady = player.playWhenReady,
-            currentPosition = position,
-            duration = duration,
-            isInitialLoading = false,
-            isBuffering = player.playState == PlayState.BUFFERING,
-            isPlaylist = isPlaylist,
-            currentTrackIndex = index,
-            trackCount = if (isPlaylist) tracks.size else 1,
-            trackTitle = tracks.getOrNull(index)?.title ?: book.title,
-            tracks = updateTrackProgress(tracks, index, position, duration),
-            coverUrl = book.coverUrl
-        )
+        _uiState.update {
+            it.copy(
+                bookId = book.id,
+                title = book.title,
+                isPlaying = player.isPlaying,
+                playWhenReady = player.playWhenReady,
+                currentPosition = position,
+                duration = duration,
+                isInitialLoading = false,
+                isBuffering = player.playState == PlayState.BUFFERING,
+                isPlaylist = isPlaylist,
+                currentTrackIndex = index,
+                trackCount = if (isPlaylist) tracks.size else 1,
+                trackTitle = tracks.getOrNull(index)?.title ?: book.title,
+                tracks = updateTrackProgress(tracks, index, position, duration),
+                coverUrl = book.coverUrl,
+                introSkipEnabled = book.introSkipEnabled,
+                introSkipSeconds = book.introSkipSeconds,
+                introSkipHistory = book.introSkipHistory,
+                outroSkipEnabled = book.outroSkipEnabled,
+                outroSkipSeconds = book.outroSkipSeconds,
+                outroSkipHistory = book.outroSkipHistory
+            )
+        }
     }
 
     private fun buildPlaylist(book: Book, tracks: List<Track>) {
         val startIndex = book.currentTrackIndex.coerceIn(0, tracks.lastIndex)
         val startTrack = tracks[startIndex]
-        val startPosition = resumePosition(startTrack)
+        val resume = resumePosition(startTrack)
+        val startPosition = effectiveStartPosition(resume, book)
         _uiState.update {
             it.copy(
                 bookId = book.id,
@@ -159,10 +194,22 @@ class PlayerViewModel @Inject constructor(
                 isInitialLoading = false,
                 isBuffering = true,
                 error = null,
-                playbackError = null
+                playbackError = null,
+                introSkipEnabled = book.introSkipEnabled,
+                introSkipSeconds = book.introSkipSeconds,
+                introSkipHistory = book.introSkipHistory,
+                outroSkipEnabled = book.outroSkipEnabled,
+                outroSkipSeconds = book.outroSkipSeconds,
+                outroSkipHistory = book.outroSkipHistory
             )
         }
-        val items = tracks.map { PlayableItem(url = it.webdavUrl, title = it.title) }
+        val items = tracks.map {
+            PlayableItem(
+                url = it.webdavUrl,
+                title = it.title,
+                artwork = book.coverUrl.takeIf { url -> url.isNotBlank() }
+            )
+        }
         player.setPlaylist(items, startIndex, startPosition)
         player.prepare()
         player.play()
@@ -170,12 +217,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun playSingleFile(book: Book) {
+        val startPosition = effectiveStartPosition(book.position.coerceAtLeast(0), book)
         _uiState.update {
             it.copy(
                 bookId = book.id,
                 title = book.title,
                 duration = book.duration,
-                currentPosition = book.position,
+                currentPosition = startPosition,
                 isPlaylist = false,
                 trackCount = 1,
                 trackTitle = book.title,
@@ -184,12 +232,22 @@ class PlayerViewModel @Inject constructor(
                 isInitialLoading = false,
                 isBuffering = true,
                 error = null,
-                playbackError = null
+                playbackError = null,
+                introSkipEnabled = book.introSkipEnabled,
+                introSkipSeconds = book.introSkipSeconds,
+                introSkipHistory = book.introSkipHistory,
+                outroSkipEnabled = book.outroSkipEnabled,
+                outroSkipSeconds = book.outroSkipSeconds,
+                outroSkipHistory = book.outroSkipHistory
             )
         }
         player.setItem(
-            PlayableItem(url = book.webdavUrl, title = book.title),
-            book.position.coerceAtLeast(0)
+            PlayableItem(
+                url = book.webdavUrl,
+                title = book.title,
+                artwork = book.coverUrl.takeIf { it.isNotBlank() }
+            ),
+            startPosition
         )
         player.prepare()
         player.play()
@@ -229,6 +287,15 @@ class PlayerViewModel @Inject constructor(
                         current.duration,
                         current.duration
                     ) else saveProgress()
+                    // 末曲自然结束时同样按集数递减（无需再调用 pause）
+                    if (episodesRemaining > 0) {
+                        episodesRemaining--
+                        _uiState.update {
+                            it.copy(
+                                sleepTimerEpisodesRemaining = episodesRemaining.takeIf { r -> r > 0 }
+                            )
+                        }
+                    }
                     _uiState.update {
                         it.copy(isPlaying = false, playWhenReady = false, isBuffering = false)
                     }
@@ -246,9 +313,25 @@ class PlayerViewModel @Inject constructor(
                 val oldTrack = oldState.tracks.getOrNull(oldState.currentTrackIndex)
                 val duration = validDuration(oldTrack?.duration ?: 0, oldState.duration)
                 persistTrackProgress(oldState.currentTrackIndex, duration, duration)
+                // 按集数定时：自然切集后递减
+                if (episodesRemaining > 0) {
+                    episodesRemaining--
+                    if (episodesRemaining == 0) {
+                        _uiState.update { it.copy(sleepTimerEpisodesRemaining = null) }
+                        player.pause()
+                    } else {
+                        _uiState.update { it.copy(sleepTimerEpisodesRemaining = episodesRemaining) }
+                    }
+                }
             }
             val track = oldState.tracks.getOrNull(index)
-            val position = player.currentPosition.coerceAtLeast(0)
+            // 自然/手动切集后，若启用片头跳过则把游标推到片头之后
+            val introTargetMs = activeBook?.introMs() ?: 0L
+            val basePosition = player.currentPosition.coerceAtLeast(0)
+            val position = if (introTargetMs > 0 && basePosition < introTargetMs) introTargetMs else basePosition
+            if (position != basePosition) {
+                player.seekTo(index, position)
+            }
             _uiState.update {
                 it.copy(
                     currentTrackIndex = index,
@@ -308,11 +391,22 @@ class PlayerViewModel @Inject constructor(
         if (activeTracks.isNotEmpty()) {
             val index = player.currentItemIndex.coerceAtLeast(0)
             val track = activeTracks.getOrNull(index) ?: return
-            player.replaceItem(index, PlayableItem(url = track.webdavUrl, title = track.title))
+            player.replaceItem(
+                index,
+                PlayableItem(
+                    url = track.webdavUrl,
+                    title = track.title,
+                    artwork = book.coverUrl.takeIf { it.isNotBlank() }
+                )
+            )
             player.seekTo(index, resumePosition(track))
         } else {
             player.setItem(
-                PlayableItem(url = book.webdavUrl, title = book.title),
+                PlayableItem(
+                    url = book.webdavUrl,
+                    title = book.title,
+                    artwork = book.coverUrl.takeIf { it.isNotBlank() }
+                ),
                 book.position.coerceAtLeast(0)
             )
         }
@@ -351,7 +445,8 @@ class PlayerViewModel @Inject constructor(
         val track = state.tracks.getOrNull(index) ?: return
         if (index !in 0 until player.itemCount) return
         saveProgress()
-        player.seekTo(index, resumePosition(track))
+        val target = effectiveStartPosition(resumePosition(track), activeBook)
+        player.seekTo(index, target)
         player.play()
     }
 
@@ -367,9 +462,48 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun setSleepTimer(minutes: Int) {
-        _uiState.update { it.copy(sleepTimerRemaining = minutes) }
+    fun setSleepTimer(choice: TimerChoice) {
+        val bookId = _uiState.value.bookId
+        if (bookId == 0L) return
+        cancelSleepTimerInternal()
+        when (choice) {
+            is TimerChoice.Minutes -> startMinuteTimer(choice.minutes)
+            is TimerChoice.Episodes -> startEpisodeTimer(choice.count)
+        }
+        sleepTimerPrefs?.saveForBook(bookId, choice)
+        sleepTimerPrefs?.saveGlobal(choice)
+        _uiState.update { it.copy(lastTimerChoice = choice) }
+    }
+
+    /** 切换上次定时：未启用则恢复，已启用则取消。 */
+    fun toggleLastTimer() {
+        val last = _uiState.value.lastTimerChoice ?: return
+        val state = _uiState.value
+        val isLastActive = when (last) {
+            is TimerChoice.Minutes -> state.sleepTimerRemaining != null
+            is TimerChoice.Episodes -> state.sleepTimerEpisodesRemaining != null
+        }
+        if (isLastActive) cancelSleepTimer() else setSleepTimer(last)
+    }
+
+    fun cancelSleepTimer() {
+        cancelSleepTimerInternal()
+    }
+
+    private fun cancelSleepTimerInternal() {
         sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        episodesRemaining = 0
+        _uiState.update {
+            it.copy(
+                sleepTimerRemaining = null,
+                sleepTimerEpisodesRemaining = null
+            )
+        }
+    }
+
+    private fun startMinuteTimer(minutes: Int) {
+        _uiState.update { it.copy(sleepTimerRemaining = minutes) }
         sleepTimerJob = viewModelScope.launch {
             var remaining = minutes
             while (remaining > 0) {
@@ -382,9 +516,10 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun cancelSleepTimer() {
-        sleepTimerJob?.cancel()
-        _uiState.update { it.copy(sleepTimerRemaining = null) }
+    private fun startEpisodeTimer(count: Int) {
+        require(count >= 1) { "集数必须 >= 1" }
+        episodesRemaining = count
+        _uiState.update { it.copy(sleepTimerEpisodesRemaining = count) }
     }
 
     fun scrapeCoverFromDouban(query: String = "") {
@@ -442,6 +577,60 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 保存「跳过头尾」设置并立即生效。
+     * - 持久化到数据库（合并历史时长）；
+     * - 若当前播放时间处于 [0, introMs) 且启用 intro，则直接跳到 introMs。
+     */
+    fun applySkipSettings(
+        introEnabled: Boolean,
+        introSeconds: Int,
+        outroEnabled: Boolean,
+        outroSeconds: Int
+    ) {
+        val state = _uiState.value
+        if (state.bookId == 0L) return
+        val introSec = introSeconds.coerceIn(0, MAX_SKIP_SECONDS)
+        val outroSec = outroSeconds.coerceIn(0, MAX_SKIP_SECONDS)
+        _uiState.update {
+            it.copy(
+                introSkipEnabled = introEnabled,
+                introSkipSeconds = introSec,
+                outroSkipEnabled = outroEnabled,
+                outroSkipSeconds = outroSec
+            )
+        }
+        activeBook = activeBook?.copy(
+            introSkipEnabled = introEnabled,
+            introSkipSeconds = introSec,
+            outroSkipEnabled = outroEnabled,
+            outroSkipSeconds = outroSec
+        )
+        viewModelScope.launch {
+            bookRepository.updateSkipSettings(state.bookId, introEnabled, introSec, outroEnabled, outroSec)
+            // 重新读取以拿到合并后的历史（Repository 内部做了去重与截断）
+            bookRepository.getBookById(state.bookId)?.let { updated ->
+                activeBook = updated
+                _uiState.update {
+                    it.copy(
+                        introSkipHistory = updated.introSkipHistory,
+                        outroSkipHistory = updated.outroSkipHistory
+                    )
+                }
+            }
+        }
+        // 保存时立即生效：当前时间处于片头区间内则一次性跳到片头
+        if (introEnabled && introSec > 0) {
+            val introMs = introSec * 1000L
+            val pos = player.currentPosition.coerceAtLeast(0)
+            if (pos in 0 until introMs) {
+                player.seekTo(introMs)
+                _uiState.update { it.copy(currentPosition = introMs) }
+                saveProgress(introMs)
+            }
+        }
+    }
+
     private fun persistTrackProgress(index: Int, position: Long, duration: Long) {
         val state = _uiState.value
         if (index !in state.tracks.indices) return
@@ -480,6 +669,14 @@ class PlayerViewModel @Inject constructor(
                         } else it.tracks
                     )
                 }
+                // 片尾跳过：到达末尾前 outroMs 主动暂停。pause() 会让 playWhenReady=false，
+                // 下一次循环不会重复触发；用户手动继续播放若仍在区间内会再被拦下（符合预期）
+                if (state.outroSkipEnabled && state.outroSkipSeconds > 0 && duration > 0
+                    && player.playWhenReady && position >= duration - state.outroSkipSeconds * 1000L
+                    && position > 0
+                ) {
+                    player.pause()
+                }
             }
         }
     }
@@ -506,6 +703,8 @@ class PlayerViewModel @Inject constructor(
         const val TAG = "PlayerViewModel"
         const val PROGRESS_SAVE_INTERVAL_MS = 15_000L
         const val POSITION_UPDATE_INTERVAL_MS = 500L
+        /** 片头/片尾跳过的最大秒数（与 UI 滑杆上限一致）。 */
+        const val MAX_SKIP_SECONDS = 180
     }
 }
 
@@ -533,3 +732,16 @@ private fun updateTrackProgress(
 ): List<Track> = tracks.mapIndexed { trackIndex, track ->
     if (trackIndex == index) track.copy(position = position, duration = duration) else track
 }
+
+/**
+ * 切集 / 首次播放时，根据「跳片头」设置决定实际起始位置：
+ * 若启用且「自然起始位置」< introMs，则直接落到 introMs；否则按原值起播。
+ */
+private fun effectiveStartPosition(resumeMs: Long, book: Book?): Long {
+    val introMs = book?.introMs() ?: 0L
+    if (introMs <= 0) return resumeMs
+    return if (resumeMs < introMs) introMs else resumeMs
+}
+
+private fun Book.introMs(): Long =
+    if (introSkipEnabled && introSkipSeconds > 0) introSkipSeconds * 1000L else 0L

@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.tingyiting.ui.player
 
 import android.graphics.Bitmap
@@ -11,10 +13,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -34,10 +38,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -47,7 +53,11 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -56,7 +66,6 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
@@ -85,6 +94,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -112,6 +122,7 @@ fun PlayerScreen(
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showTrackSheet by remember { mutableStateOf(false) }
     var showCoverSheet by remember { mutableStateOf(false) }
+    var showSkipSheet by remember { mutableStateOf(false) }
     var cropImageUri by remember { mutableStateOf<Uri?>(null) }
     var draggedFraction by remember { mutableStateOf<Float?>(null) }
     val trackSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -231,7 +242,11 @@ fun PlayerScreen(
                     AssistChip(
                         onClick = { showSleepTimerDialog = true },
                         label = {
-                            Text(state.sleepTimerRemaining?.let { "$it 分钟后停止" } ?: "定时")
+                            val activeLabel = state.sleepTimerRemaining?.let { "$it 分钟后停止" }
+                                ?: state.sleepTimerEpisodesRemaining?.let { remaining ->
+                                    if (remaining <= 1) "播完本集后停止" else "播完 $remaining 集后停止"
+                                }
+                            Text(activeLabel ?: "定时")
                         },
                         leadingIcon = {
                             Icon(
@@ -240,6 +255,30 @@ fun PlayerScreen(
                                 } else Icons.Default.Timer,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                    val skipActive = state.introSkipEnabled || state.outroSkipEnabled
+                    AssistChip(
+                        onClick = { showSkipSheet = true },
+                        label = {
+                            Text(
+                                when {
+                                    state.introSkipEnabled && state.outroSkipEnabled ->
+                                        "头${state.introSkipSeconds}s 尾${state.outroSkipSeconds}s"
+                                    state.introSkipEnabled -> "跳过片头 ${state.introSkipSeconds}s"
+                                    state.outroSkipEnabled -> "跳过片尾 ${state.outroSkipSeconds}s"
+                                    else -> "跳过头尾"
+                                }
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (skipActive) Icons.Default.ContentCut else Icons.Default.Forward10,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = if (skipActive) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     )
@@ -263,9 +302,13 @@ fun PlayerScreen(
 
     if (showSleepTimerDialog) {
         SleepTimerDialog(
-            currentRemaining = state.sleepTimerRemaining,
-            onSet = viewModel::setSleepTimer,
+            lastChoice = state.lastTimerChoice,
+            activeMinutesRemaining = state.sleepTimerRemaining,
+            activeEpisodesRemaining = state.sleepTimerEpisodesRemaining,
+            isPlaylist = state.isPlaylist,
+            onApply = viewModel::setSleepTimer,
             onCancel = viewModel::cancelSleepTimer,
+            onToggleLast = viewModel::toggleLastTimer,
             onDismiss = { showSleepTimerDialog = false }
         )
     }
@@ -419,6 +462,19 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+
+    if (showSkipSheet) {
+        SkipIntroOutroSheet(
+            introEnabled = state.introSkipEnabled,
+            introSeconds = state.introSkipSeconds,
+            introHistory = state.introSkipHistory,
+            outroEnabled = state.outroSkipEnabled,
+            outroSeconds = state.outroSkipSeconds,
+            outroHistory = state.outroSkipHistory,
+            onApply = viewModel::applySkipSettings,
+            onDismiss = { showSkipSheet = false }
+        )
     }
 }
 
@@ -732,35 +788,273 @@ private fun PlaybackControls(
 
 @Composable
 private fun SleepTimerDialog(
-    currentRemaining: Int?,
-    onSet: (Int) -> Unit,
+    lastChoice: TimerChoice?,
+    activeMinutesRemaining: Int?,
+    activeEpisodesRemaining: Int?,
+    isPlaylist: Boolean,
+    onApply: (TimerChoice) -> Unit,
     onCancel: () -> Unit,
+    onToggleLast: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var showCustomInput by remember { mutableStateOf(false) }
+    var customMinutesText by remember { mutableStateOf("") }
+    val isLastActive = when (lastChoice) {
+        is TimerChoice.Minutes -> activeMinutesRemaining != null
+        is TimerChoice.Episodes -> activeEpisodesRemaining != null
+        null -> false
+    }
+    val anyTimerActive = activeMinutesRemaining != null || activeEpisodesRemaining != null
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("睡眠定时器") },
+        title = { Text("定时") },
         text = {
             Column {
-                if (currentRemaining != null) {
-                    Text("剩余 $currentRemaining 分钟后停止播放")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = onCancel) { Text("取消定时") }
-                } else {
-                    Text("设定多久后停止播放？")
-                    Spacer(modifier = Modifier.height(16.dp))
-                    listOf(15, 30, 45, 60).forEach { minutes ->
-                        TextButton(
-                            onClick = { onSet(minutes); onDismiss() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("$minutes 分钟") }
+                if (lastChoice != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "上次定时  ${lastChoice.describe()}",
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = isLastActive,
+                            onCheckedChange = { onToggleLast() }
+                        )
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                Text("按时间", style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    listOf(15, 30, 60, 90).forEach { min ->
+                        FilterChip(
+                            selected = activeMinutesRemaining == min,
+                            onClick = {
+                                onApply(TimerChoice.Minutes(min))
+                                showCustomInput = false
+                                onDismiss()
+                            },
+                            label = { Text("${min}分") }
+                        )
+                    }
+                    FilterChip(
+                        selected = showCustomInput,
+                        onClick = { showCustomInput = !showCustomInput },
+                        label = { Text("自定义") }
+                    )
+                }
+                if (showCustomInput) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = customMinutesText,
+                            onValueChange = { input ->
+                                customMinutesText = input.filter { it.isDigit() }.take(3)
+                            },
+                            label = { Text("分钟") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val n = customMinutesText.toIntOrNull()
+                                if (n != null && n > 0) {
+                                    onApply(TimerChoice.Minutes(n))
+                                    onDismiss()
+                                }
+                            }
+                        ) { Text("确定") }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (isPlaylist) {
+                    Text("按集数", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        listOf(1, 2, 3, 5).forEach { count ->
+                            val label = if (count <= 1) "播完本集" else "播完${count}集"
+                            FilterChip(
+                                selected = activeEpisodesRemaining == count,
+                                onClick = {
+                                    onApply(TimerChoice.Episodes(count))
+                                    onDismiss()
+                                },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                if (anyTimerActive) {
+                    TextButton(onClick = { onCancel() }) { Text("取消定时") }
                 }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
     )
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkipIntroOutroSheet(
+    introEnabled: Boolean,
+    introSeconds: Int,
+    introHistory: List<Int>,
+    outroEnabled: Boolean,
+    outroSeconds: Int,
+    outroHistory: List<Int>,
+    onApply: (introEnabled: Boolean, introSeconds: Int, outroEnabled: Boolean, outroSeconds: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var introOn by remember(introSeconds, introEnabled) { mutableStateOf(introEnabled) }
+    var introSec by remember(introSeconds) { mutableStateOf(introSeconds.coerceIn(0, MAX_SKIP_SECONDS)) }
+    var outroOn by remember(outroSeconds, outroEnabled) { mutableStateOf(outroEnabled) }
+    var outroSec by remember(outroSeconds) { mutableStateOf(outroSeconds.coerceIn(0, MAX_SKIP_SECONDS)) }
+    val introOptions = remember(introHistory) { quickSkipOptions(introHistory) }
+    val outroOptions = remember(outroHistory) { quickSkipOptions(outroHistory) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "跳过片头片尾",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "设置后对本专辑内所有声音生效",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            SkipSection(
+                title = "跳过片头",
+                enabled = introOn,
+                onEnabledChange = { introOn = it },
+                seconds = introSec,
+                onSecondsChange = { introSec = it },
+                quickOptions = introOptions
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            SkipSection(
+                title = "跳过片尾",
+                enabled = outroOn,
+                onEnabledChange = { outroOn = it },
+                seconds = outroSec,
+                onSecondsChange = { outroSec = it },
+                quickOptions = outroOptions
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) { Text("取消") }
+                Button(
+                    onClick = {
+                        onApply(introOn, introSec, outroOn, outroSec)
+                        onDismiss()
+                    },
+                    enabled = introOn || outroOn,
+                    modifier = Modifier.weight(1f)
+                ) { Text("保存") }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun SkipSection(
+    title: String,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    seconds: Int,
+    onSecondsChange: (Int) -> Unit,
+    quickOptions: List<Int>
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "$title ${seconds}s",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Switch(checked = enabled, onCheckedChange = onEnabledChange)
+        }
+        Slider(
+            value = seconds.toFloat(),
+            onValueChange = { onSecondsChange(it.roundToInt().coerceIn(0, MAX_SKIP_SECONDS)) },
+            valueRange = 0f..MAX_SKIP_SECONDS.toFloat(),
+            steps = MAX_SKIP_SECONDS - 1,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "0s",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "${seconds}s · 建议位置 ${MAX_SKIP_SECONDS}s",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            quickOptions.forEach { optionSeconds ->
+                FilterChip(
+                    selected = seconds == optionSeconds,
+                    onClick = { onSecondsChange(optionSeconds) },
+                    enabled = enabled,
+                    label = { Text("${optionSeconds}s") }
+                )
+            }
+        }
+    }
+}
+
+/** 固定档位 + 历史档位去重，升序排列方便从大到小挑选。 */
+private fun quickSkipOptions(history: List<Int>): List<Int> =
+    (FIXED_SKIP_SECONDS + history).distinct().sorted()
+
+private val FIXED_SKIP_SECONDS: List<Int> = listOf(15, 30, 60, 120, 180)
+private const val MAX_SKIP_SECONDS = 180
 
 private fun formatDuration(ms: Long): String {
     val totalSeconds = ms.coerceAtLeast(0) / 1000

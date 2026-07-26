@@ -67,6 +67,26 @@ class BookRepositoryTest {
         assertEquals("新名字", bookDao.updatedTitle)
     }
 
+    @Test
+    fun updateSkipSettings_persistsAndDedupsHistory() = runTest {
+        val bookId = 7L
+        val bookDao = FakeBookDao(bookId)
+        val repo = BookRepository(bookDao, FakeTrackDao())
+
+        // 首次保存：仅 out History 列中出现该值
+        repo.updateSkipSettings(bookId, introEnabled = true, introSeconds = 30, outroEnabled = false, outroSeconds = 0)
+        assertEquals(true, bookDao.updatedSkip?.introEnabled)
+        assertEquals(30, bookDao.updatedSkip?.introSeconds)
+        assertEquals("30", bookDao.updatedSkip?.introHistory)
+        assertEquals("", bookDao.updatedSkip?.outroHistory) // outroSeconds=0 不入历史
+
+        // 多次设置后应去重，且最新插入排到首位
+        repo.updateSkipSettings(bookId, true, 60, false, 0)
+        repo.updateSkipSettings(bookId, true, 30, false, 0) // 重复 30 应去重
+        assertEquals(true, bookDao.updatedSkip?.introEnabled)
+        assertEquals("30,60", bookDao.updatedSkip?.introHistory)
+    }
+
     // ---- 测试替身 ----
 
     private object NoOpConfigStore : WebDavConfigStore {
@@ -94,19 +114,62 @@ class BookRepositoryTest {
     private class FakeBookDao(private val existingId: Long) : BookDao {
         var updated: BookEntity? = null
         var updatedTitle: String? = null
+        var updatedSkip: SkipUpdate? = null
+        data class SkipUpdate(
+            val introEnabled: Boolean,
+            val introSeconds: Int,
+            val introHistory: String,
+            val outroEnabled: Boolean,
+            val outroSeconds: Int,
+            val outroHistory: String
+        )
+
+        // 模拟持久层：update 后 getBookById 应返回新值，才能让 BookRepository 的
+        // "读-合并-写" 跨多次调用累积历史，否则测试无法验证去重/合并/截断
+        private var storedEntity: BookEntity = BookEntity(
+            id = existingId, title = "旧名", rootPath = "/old", source = SOURCE_WEBDAV
+        )
 
         override fun getAllBooks(): Flow<List<BookEntity>> = flowOf(emptyList())
         override suspend fun getBookById(id: Long): BookEntity? =
-            if (id == existingId) BookEntity(id = id, title = "旧名", rootPath = "/old", source = SOURCE_WEBDAV)
-            else null
+            if (id == existingId) storedEntity else null
         override suspend fun getBookByUrl(url: String): BookEntity? = null
         override suspend fun getBookByRootPath(rootPath: String): BookEntity? = null
         override suspend fun insert(book: BookEntity): Long = book.id
-        override suspend fun update(book: BookEntity) { updated = book }
-        override suspend fun updateTitle(id: Long, title: String) { updatedTitle = title }
+        override suspend fun update(book: BookEntity) {
+            updated = book
+            if (book.id == existingId) storedEntity = book
+        }
+        override suspend fun updateTitle(id: Long, title: String) {
+            updatedTitle = title
+            storedEntity = storedEntity.copy(title = title)
+        }
         override suspend fun delete(book: BookEntity) {}
-        override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {}
-        override suspend fun updateCover(id: Long, coverUrl: String) {}
+        override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {
+            storedEntity = storedEntity.copy(position = position, duration = duration, lastPlayedAt = timestamp)
+        }
+        override suspend fun updateCover(id: Long, coverUrl: String) {
+            storedEntity = storedEntity.copy(coverUrl = coverUrl)
+        }
+        override suspend fun updateSkipSettings(
+            id: Long,
+            introEnabled: Boolean,
+            introSeconds: Int,
+            introHistory: String,
+            outroEnabled: Boolean,
+            outroSeconds: Int,
+            outroHistory: String
+        ) {
+            updatedSkip = SkipUpdate(introEnabled, introSeconds, introHistory, outroEnabled, outroSeconds, outroHistory)
+            storedEntity = storedEntity.copy(
+                introSkipEnabled = introEnabled,
+                introSkipSeconds = introSeconds,
+                introSkipHistory = introHistory,
+                outroSkipEnabled = outroEnabled,
+                outroSkipSeconds = outroSeconds,
+                outroSkipHistory = outroHistory
+            )
+        }
     }
 
     private class FakeTrackDao : TrackDao {

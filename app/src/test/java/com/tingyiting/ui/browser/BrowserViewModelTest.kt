@@ -212,6 +212,15 @@ class BrowserViewModelTest {
             override suspend fun updateTitle(id: Long, title: String) {}
             override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {}
             override suspend fun updateCover(id: Long, coverUrl: String) {}
+            override suspend fun updateSkipSettings(
+                id: Long,
+                introEnabled: Boolean,
+                introSeconds: Int,
+                introHistory: String,
+                outroEnabled: Boolean,
+                outroSeconds: Int,
+                outroHistory: String
+            ) {}
         }
 
         val stubTrackDao = object : TrackDao {

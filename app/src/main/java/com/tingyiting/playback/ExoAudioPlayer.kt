@@ -1,14 +1,19 @@
 package com.tingyiting.playback
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import java.io.File
 
 /** 将 Media3 ExoPlayer 适配为窄接口 [AudioPlayer]，Media3 类型不外泄。 */
-class ExoAudioPlayer(private val player: ExoPlayer) : AudioPlayer {
+class ExoAudioPlayer(private val player: ExoPlayer, private val context: Context) : AudioPlayer {
 
     private val delegates = mutableMapOf<AudioPlayer.Listener, Player.Listener>()
 
@@ -68,6 +73,45 @@ class ExoAudioPlayer(private val player: ExoPlayer) : AudioPlayer {
     override fun removeListener(listener: AudioPlayer.Listener) {
         delegates.remove(listener)?.let(player::removeListener)
     }
+
+    private fun PlayableItem.toMediaItem(): MediaItem = MediaItem.Builder()
+        .setUri(url)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(title)
+                .setArtworkUri(resolveArtworkUri(artwork))
+                .build()
+        )
+        .build()
+
+    /**
+     * 将封面地址解析为通知/锁屏可见的 [Uri]。
+     * 应用私有目录下的 file:// 封面对系统界面（SystemUI）不可见，
+     * 需经 FileProvider 转为 content:// 并授予系统界面读取权限，才能在锁屏与状态栏媒体通知中显示封面。
+     */
+    private fun resolveArtworkUri(artwork: String?): Uri? {
+        if (artwork.isNullOrBlank()) return null
+        val uri = Uri.parse(artwork)
+        if (uri.scheme != "file") return uri
+        return try {
+            val file = File(uri.path ?: return null)
+            val contentUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            // 授予系统界面读取权限，使后台通知/锁屏封面可显示（FileProvider 默认不对外暴露）
+            context.grantUriPermission(
+                "com.android.systemui",
+                contentUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            contentUri
+        } catch (_: Exception) {
+            // 解析失败（如路径不在共享范围内）时静默降级，仅不显示封面，不影响播放
+            null
+        }
+    }
 }
 
 private fun Int.toPlayState(): PlayState = when (this) {
@@ -76,11 +120,6 @@ private fun Int.toPlayState(): PlayState = when (this) {
     Player.STATE_ENDED -> PlayState.ENDED
     else -> PlayState.IDLE
 }
-
-private fun PlayableItem.toMediaItem(): MediaItem = MediaItem.Builder()
-    .setUri(url)
-    .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
-    .build()
 
 private fun PlaybackException.toPlaybackError(): PlaybackError = PlaybackError(
     codeName = errorCodeName,

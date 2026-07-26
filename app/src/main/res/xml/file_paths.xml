@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 暴露应用私有封面目录，供系统界面（锁屏/状态栏通知）读取以显示封面 -->
+    <files-path
+        name="covers"
+        path="covers/" />
+</paths>

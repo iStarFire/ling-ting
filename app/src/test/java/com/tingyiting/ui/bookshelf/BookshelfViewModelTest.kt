@@ -225,6 +225,15 @@ class BookshelfViewModelTest {
         override suspend fun delete(book: BookEntity) {}
         override suspend fun updateProgress(id: Long, position: Long, duration: Long, timestamp: Long) {}
         override suspend fun updateCover(id: Long, coverUrl: String) {}
+        override suspend fun updateSkipSettings(
+            id: Long,
+            introEnabled: Boolean,
+            introSeconds: Int,
+            introHistory: String,
+            outroEnabled: Boolean,
+            outroSeconds: Int,
+            outroHistory: String
+        ) {}
     }
 
     private class FakeTrackDao : TrackDao {

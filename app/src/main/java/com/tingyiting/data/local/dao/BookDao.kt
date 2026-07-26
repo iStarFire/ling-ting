@@ -36,4 +36,30 @@ interface BookDao {
 
     @Query("UPDATE books SET coverUrl = :coverUrl WHERE id = :id")
     suspend fun updateCover(id: Long, coverUrl: String)
+
+    /**
+     * 更新本专辑的「跳过头尾」设置（六列同步写入）。
+     * 历史时长由调用方序列化（逗号分隔字符串），DAO 不解析，避免循环依赖。
+     */
+    @Query(
+        """
+        UPDATE books SET
+            introSkipEnabled = :introEnabled,
+            introSkipSeconds = :introSeconds,
+            introSkipHistory = :introHistory,
+            outroSkipEnabled = :outroEnabled,
+            outroSkipSeconds = :outroSeconds,
+            outroSkipHistory = :outroHistory
+        WHERE id = :id
+        """
+    )
+    suspend fun updateSkipSettings(
+        id: Long,
+        introEnabled: Boolean,
+        introSeconds: Int,
+        introHistory: String,
+        outroEnabled: Boolean,
+        outroSeconds: Int,
+        outroHistory: String
+    )
 }

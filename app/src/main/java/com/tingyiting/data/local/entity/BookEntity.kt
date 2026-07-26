@@ -21,5 +21,14 @@ data class BookEntity(
     val currentTrackIndex: Int = 0,
     val duration: Long = 0,
     val position: Long = 0,
-    val lastPlayedAt: Long = 0
+    val lastPlayedAt: Long = 0,
+    // 跳过头尾设置（仅作用于本专辑所有声音；详见 Book 中字段注释）
+    val introSkipEnabled: Boolean = false,
+    val introSkipSeconds: Int = 0,
+    /** 片头历史时长，逗号分隔，例如 "30,60"，空字符串表示无历史。 */
+    val introSkipHistory: String = "",
+    val outroSkipEnabled: Boolean = false,
+    val outroSkipSeconds: Int = 0,
+    /** 片尾历史时长，逗号分隔。 */
+    val outroSkipHistory: String = ""
 )

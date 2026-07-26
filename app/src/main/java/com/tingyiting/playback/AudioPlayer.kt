@@ -1,9 +1,11 @@
 package com.tingyiting.playback
 
-/** 播放条目：仅含播放所需的 URL 与标题，与 Media3 类型解耦。 */
+/** 播放条目：仅含播放所需的 URL 与标题，与 Media3 类型解耦。
+ * [artwork] 为封面地址（本地 file:// 或 http(s)），用于状态栏/锁屏媒体通知展示封面。 */
 data class PlayableItem(
     val url: String,
-    val title: String
+    val title: String,
+    val artwork: String? = null
 )
 
 /** 播放器状态，对应 Media3 的 Player.STATE_*。 */

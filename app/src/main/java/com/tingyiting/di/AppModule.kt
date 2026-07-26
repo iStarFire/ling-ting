@@ -42,7 +42,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideAudioPlayer(player: ExoPlayer): AudioPlayer = ExoAudioPlayer(player)
+    fun provideAudioPlayer(@ApplicationContext context: Context, player: ExoPlayer): AudioPlayer =
+        ExoAudioPlayer(player, context)
 
     @Provides
     @Singleton

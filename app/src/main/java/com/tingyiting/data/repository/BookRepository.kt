@@ -162,6 +162,45 @@ open class BookRepository @Inject constructor(
         bookDao.updateCover(bookId, coverUrl)
     }
 
+    /**
+     * 更新本专辑的「跳过头尾」设置。
+     * [introSeconds] / [outroSeconds] 由调用方保证已 clamp 到 [0, 180]。
+     * 任何非零值都会并入各自的历史集合（去重，保留最近若干个），便于不同集选不同片头片尾。
+     */
+    open suspend fun updateSkipSettings(
+        bookId: Long,
+        introEnabled: Boolean,
+        introSeconds: Int,
+        outroEnabled: Boolean,
+        outroSeconds: Int
+    ) {
+        val existing = bookDao.getBookById(bookId) ?: return
+        val newIntroHistory = appendHistory(existing.introSkipHistory, introSeconds)
+        val newOutroHistory = appendHistory(existing.outroSkipHistory, outroSeconds)
+        bookDao.updateSkipSettings(
+            id = bookId,
+            introEnabled = introEnabled,
+            introSeconds = introSeconds,
+            introHistory = newIntroHistory,
+            outroEnabled = outroEnabled,
+            outroSeconds = outroSeconds,
+            outroHistory = newOutroHistory
+        )
+    }
+
+    private fun appendHistory(current: String, seconds: Int): String {
+        if (seconds <= 0) return current
+        val existing = parseHistory(current).toMutableList()
+        existing.remove(seconds)
+        existing.add(0, seconds)
+        // 截断保留最近的若干项，避免无限增长
+        val capped = if (existing.size > MAX_HISTORY) existing.take(MAX_HISTORY) else existing
+        return capped.joinToString(",")
+    }
+
+    private fun parseHistory(raw: String): List<Int> =
+        raw.split(',').mapNotNull { it.trim().toIntOrNull() }
+
     private fun BookEntity.toBook() = Book(
         id = id,
         title = title,
@@ -172,7 +211,13 @@ open class BookRepository @Inject constructor(
         source = source,
         currentTrackIndex = currentTrackIndex,
         duration = duration,
-        position = position
+        position = position,
+        introSkipEnabled = introSkipEnabled,
+        introSkipSeconds = introSkipSeconds,
+        introSkipHistory = parseHistory(introSkipHistory),
+        outroSkipEnabled = outroSkipEnabled,
+        outroSkipSeconds = outroSkipSeconds,
+        outroSkipHistory = parseHistory(outroSkipHistory)
     )
 
     private fun TrackEntity.toTrack() = Track(
@@ -183,4 +228,9 @@ open class BookRepository @Inject constructor(
         duration = duration,
         position = position
     )
+
+    private companion object {
+        /** 每段历史最多保留的条目数（去重后）；超过则丢弃最早项。 */
+        const val MAX_HISTORY = 8
+    }
 }

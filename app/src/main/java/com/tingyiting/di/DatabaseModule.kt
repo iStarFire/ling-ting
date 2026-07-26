@@ -26,7 +26,8 @@ object DatabaseModule {
         ).addMigrations(
             TingYiTingDatabase.MIGRATION_1_2,
             TingYiTingDatabase.MIGRATION_2_3,
-            TingYiTingDatabase.MIGRATION_3_4
+            TingYiTingDatabase.MIGRATION_3_4,
+            TingYiTingDatabase.MIGRATION_4_5
         ).build()
     }
 

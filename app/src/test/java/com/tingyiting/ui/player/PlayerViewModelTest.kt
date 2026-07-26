@@ -78,7 +78,13 @@ class PlayerViewModelTest {
         duration: Long,
         currentTrackIndex: Int,
         rootPath: String = "",
-        webdavUrl: String = ""
+        webdavUrl: String = "",
+        introSkipEnabled: Boolean = false,
+        introSkipSeconds: Int = 0,
+        introSkipHistory: List<Int> = emptyList(),
+        outroSkipEnabled: Boolean = false,
+        outroSkipSeconds: Int = 0,
+        outroSkipHistory: List<Int> = emptyList()
     ) = Book(
         id = id,
         title = title,
@@ -88,7 +94,13 @@ class PlayerViewModelTest {
         rootPath = rootPath,
         currentTrackIndex = currentTrackIndex,
         duration = duration,
-        position = position
+        position = position,
+        introSkipEnabled = introSkipEnabled,
+        introSkipSeconds = introSkipSeconds,
+        introSkipHistory = introSkipHistory,
+        outroSkipEnabled = outroSkipEnabled,
+        outroSkipSeconds = outroSkipSeconds,
+        outroSkipHistory = outroSkipHistory
     )
 
     private fun track(
@@ -203,6 +215,53 @@ class PlayerViewModelTest {
 
         verify(bookRepository).saveTrackProgress(1, 0, 50_000, 100_000)
         assertEquals(1, player.seekToNextCount)
+    }
+
+    @Test
+    fun buildPlaylist_passesCoverArtworkToPlayer() = vmTest {
+        val cover = "file:///data/data/com.tingyiting/files/covers/book_1.jpg"
+        val book = book(1, "A", position = 0, duration = 0, 0, rootPath = "/book")
+            .copy(coverUrl = cover)
+        val t0 = track(10, "c1", "http://x/1.mp3", 0, 100_000)
+        val t1 = track(11, "c2", "http://x/2.mp3", 0, 100_000)
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(listOf(t0, t1))
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        // 播放列表与单文件播放均应将封面地址透传给播放器，供状态栏/锁屏媒体通知显示
+        assertEquals(cover, player.items[0].artwork)
+        assertEquals(cover, player.items[1].artwork)
+    }
+
+    @Test
+    fun playSingleFile_passesCoverArtworkToPlayer() = vmTest {
+        val cover = "file:///data/data/com.tingyiting/files/covers/book_1.jpg"
+        val book = book(1, "A", position = 0, duration = 100_000, 0, webdavUrl = "http://x/a.mp3")
+            .copy(coverUrl = cover)
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        assertEquals(cover, player.items.single().artwork)
+    }
+
+    @Test
+    fun blankCoverUrl_doesNotPassArtworkToPlayer() = vmTest {
+        val book = book(1, "A", position = 0, duration = 100_000, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        assertNull(player.items.single().artwork)
     }
 
     @Test
@@ -376,6 +435,231 @@ class PlayerViewModelTest {
         runCurrent()
 
         assertEquals("自定义书名", coverRepository.lastQuery)
+    }
+
+    // endregion
+
+    // region 睡眠定时：按时间/按集数 + 上次定时记忆
+
+    @Test
+    fun setSleepTimer_minutes_recordsChoiceAndStartsCountdown() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.setSleepTimer(TimerChoice.Minutes(30))
+        runCurrent()
+
+        assertEquals(30, vm.uiState.value.sleepTimerRemaining)
+        assertEquals(TimerChoice.Minutes(30), vm.uiState.value.lastTimerChoice)
+    }
+
+    @Test
+    fun setSleepTimer_episodes_decrementsOnAutoTransition() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, rootPath = "/book")
+        val t0 = track(10, "c1", "http://x/1.mp3", 0, 100_000)
+        val t1 = track(11, "c2", "http://x/2.mp3", 0, 100_000)
+        val t2 = track(12, "c3", "http://x/3.mp3", 0, 100_000)
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(listOf(t0, t1, t2))
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.setSleepTimer(TimerChoice.Episodes(2))
+        runCurrent()
+        assertEquals(2, vm.uiState.value.sleepTimerEpisodesRemaining)
+
+        val pauseBefore = player.pauseCount
+
+        // 第一次自然切集：剩余 1
+        player.listener.onItemTransition(newIndex = 1, isAuto = true)
+        runCurrent()
+        assertEquals(1, vm.uiState.value.sleepTimerEpisodesRemaining)
+
+        // 第二次自然切集：剩余 0 → 自动暂停
+        player.listener.onItemTransition(newIndex = 2, isAuto = true)
+        runCurrent()
+        assertNull(vm.uiState.value.sleepTimerEpisodesRemaining)
+        assertEquals(pauseBefore + 1, player.pauseCount)
+
+        // 手动切集（isAuto=false）不应影响集数定时
+        vm.setSleepTimer(TimerChoice.Episodes(1))
+        runCurrent()
+        player.listener.onItemTransition(newIndex = 0, isAuto = false)
+        runCurrent()
+        assertEquals(1, vm.uiState.value.sleepTimerEpisodesRemaining)
+    }
+
+    @Test
+    fun toggleLastTimer_restoresWhenInactive_cancelsWhenActive() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        // 首次设置 → lastChoice 被记录
+        vm.setSleepTimer(TimerChoice.Episodes(3))
+        runCurrent()
+        assertEquals(TimerChoice.Episodes(3), vm.uiState.value.lastTimerChoice)
+        assertEquals(3, vm.uiState.value.sleepTimerEpisodesRemaining)
+
+        // 切换：当前激活 → 取消
+        vm.toggleLastTimer()
+        runCurrent()
+        assertNull(vm.uiState.value.sleepTimerEpisodesRemaining)
+        assertEquals(TimerChoice.Episodes(3), vm.uiState.value.lastTimerChoice)
+
+        // 再切换：未激活 → 恢复上次选择
+        vm.toggleLastTimer()
+        runCurrent()
+        assertEquals(3, vm.uiState.value.sleepTimerEpisodesRemaining)
+    }
+
+    @Test
+    fun cancelSleepTimer_clearsBothActiveFields() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.setSleepTimer(TimerChoice.Episodes(2))
+        runCurrent()
+        assertEquals(2, vm.uiState.value.sleepTimerEpisodesRemaining)
+
+        vm.cancelSleepTimer()
+        runCurrent()
+        assertNull(vm.uiState.value.sleepTimerEpisodesRemaining)
+        // lastTimerChoice 保留以便后续一键恢复
+        assertEquals(TimerChoice.Episodes(2), vm.uiState.value.lastTimerChoice)
+    }
+
+    // endregion
+
+    // region 任务7：跳过头尾
+
+    @Test
+    fun applySkipSettings_persistsValuesAndUpdatesState() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.applySkipSettings(introEnabled = true, introSeconds = 30, outroEnabled = true, outroSeconds = 60)
+        runCurrent()
+
+        assertEquals(true, vm.uiState.value.introSkipEnabled)
+        assertEquals(30, vm.uiState.value.introSkipSeconds)
+        assertEquals(true, vm.uiState.value.outroSkipEnabled)
+        assertEquals(60, vm.uiState.value.outroSkipSeconds)
+        verify(bookRepository).updateSkipSettings(1L, true, 30, true, 60)
+    }
+
+    @Test
+    fun applySkipSettings_introBelowCurrent_seeksToIntroImmediately() = vmTest {
+        val book = book(1, "A", position = 0, duration = 100_000, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        // 当前 5s，应用片头 30s：应一次性跳到 30s
+        player.currentPosition = 5_000
+
+        vm.applySkipSettings(introEnabled = true, introSeconds = 30, outroEnabled = false, outroSeconds = 0)
+        runCurrent()
+
+        assertEquals(30_000L, player.seekCalls.last().positionMs)
+        assertEquals(30_000L, vm.uiState.value.currentPosition)
+    }
+
+    @Test
+    fun applySkipSettings_introAtOrAboveCurrent_noSeek() = vmTest {
+        val book = book(1, "A", position = 0, duration = 100_000, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        // 当前 45s，应用片头 30s：不应触发 seek
+        player.currentPosition = 45_000
+        val seekCountBefore = player.seekCalls.size
+
+        vm.applySkipSettings(introEnabled = true, introSeconds = 30, outroEnabled = false, outroSeconds = 0)
+        runCurrent()
+
+        assertEquals(seekCountBefore, player.seekCalls.size)
+    }
+
+    @Test
+    fun buildPlaylist_withIntroEnabled_startsAtIntroSeconds() = vmTest {
+        // 起始进度 0，启用片头 30s：buildPlaylist 应直接定位到 30s
+        val book = book(
+            id = 1, title = "A", position = 0, duration = 0, currentTrackIndex = 0,
+            rootPath = "/book",
+            introSkipEnabled = true, introSkipSeconds = 30
+        )
+        val t0 = track(10, "c1", "http://x/1.mp3", 0, 100_000)
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(listOf(t0))
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        // 启动位置应被片头覆盖
+        assertEquals(30_000L, player.currentPosition)
+        assertEquals(30_000L, vm.uiState.value.currentPosition)
+    }
+
+    @Test
+    fun buildPlaylist_introOverriddenBySavedPosition() = vmTest {
+        // 已保存进度 60s > intro 30s：应保持 60s 不动
+        val book = book(
+            id = 1, title = "A", position = 0, duration = 0, currentTrackIndex = 0,
+            rootPath = "/book",
+            introSkipEnabled = true, introSkipSeconds = 30
+        )
+        val t0 = track(10, "c1", "http://x/1.mp3", 60_000, 100_000)
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(listOf(t0))
+
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        assertEquals(60_000L, player.currentPosition)
+    }
+
+    @Test
+    fun applySkipSettings_clampsValuesToRange() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        vm = PlayerViewModel(bookRepository, player, playbackState)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.applySkipSettings(introEnabled = true, introSeconds = 999, outroEnabled = true, outroSeconds = -1)
+        runCurrent()
+
+        assertEquals(180, vm.uiState.value.introSkipSeconds)
+        assertEquals(0, vm.uiState.value.outroSkipSeconds)
     }
 
     // endregion

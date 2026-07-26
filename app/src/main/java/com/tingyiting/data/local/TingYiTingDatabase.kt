@@ -9,7 +9,7 @@ import com.tingyiting.data.local.dao.TrackDao
 import com.tingyiting.data.local.entity.BookEntity
 import com.tingyiting.data.local.entity.TrackEntity
 
-@Database(entities = [BookEntity::class, TrackEntity::class], version = 4, exportSchema = false)
+@Database(entities = [BookEntity::class, TrackEntity::class], version = 5, exportSchema = false)
 abstract class TingYiTingDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun trackDao(): TrackDao
@@ -49,6 +49,18 @@ abstract class TingYiTingDatabase : RoomDatabase() {
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN source TEXT NOT NULL DEFAULT 'webdav'")
+            }
+        }
+
+        // v4 -> v5：books 表新增跳过头尾设置 6 列（开关、秒数、历史）
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN introSkipEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE books ADD COLUMN introSkipSeconds INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE books ADD COLUMN introSkipHistory TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE books ADD COLUMN outroSkipEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE books ADD COLUMN outroSkipSeconds INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE books ADD COLUMN outroSkipHistory TEXT NOT NULL DEFAULT ''")
             }
         }
     }
