@@ -1,13 +1,13 @@
 package com.tingyiting.network
 
+import android.util.Log
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
 import com.tingyiting.data.model.WebDavFile
-import java.io.StringReader
 import java.util.concurrent.TimeUnit
+
+private const val TAG = "WebDavClient"
 
 class WebDavClient(
     private val baseUrl: String,
@@ -24,16 +24,26 @@ class WebDavClient(
 
     /** 测试连接 */
     fun testConnection(): Result<Unit> = runCatching {
+        val url = baseUrl.trimEnd('/') + "/"
+        // 注意：不打印 credentials（含明文账号密码 base64）
+        Log.d(TAG, "testConnection url=$url user=$username method=PROPFIND depth=0")
         val request = Request.Builder()
-            .url(baseUrl.trimEnd('/') + "/")
+            .url(url)
             .method("PROPFIND", null)
             .header("Authorization", credentials)
             .header("Depth", "0")
             .build()
         val response = client.newCall(request).execute()
+        val bodyText = response.body?.string()
         if (!response.isSuccessful) {
+            Log.e(TAG, "testConnection HTTP ${response.code} url=$url body=${bodyText?.take(500)}")
             throw IllegalStateException("HTTP ${response.code} - 服务器返回错误，请检查 WebDAV 地址是否正确（Alist 需要 /dav 路径）")
         }
+        Log.d(TAG, "testConnection OK (HTTP ${response.code})")
+        Unit
+    }.onFailure { e ->
+        Log.e(TAG, "testConnection exception url=${baseUrl.trimEnd('/')}/", e)
+        Unit
     }
 
     /** 获取指定路径下的文件列表 */
@@ -50,7 +60,7 @@ class WebDavClient(
         require(response.isSuccessful) { "获取文件列表失败: ${response.code}" }
 
         val body = response.body?.string() ?: ""
-        parsePropfindResponse(body, path)
+        WebDavPropfindParser.parse(body, baseUrl, path)
     }
 
     /** 获取授权 Header，供 Media3 DataSource 使用 */
@@ -63,91 +73,5 @@ class WebDavClient(
         val base = baseUrl.trimEnd('/')
         val cleanPath = path.trimStart('/')
         return if (cleanPath.isEmpty()) "$base/" else "$base/$cleanPath"
-    }
-
-    private fun parsePropfindResponse(xml: String, parentPath: String): List<WebDavFile> {
-        val files = mutableListOf<WebDavFile>()
-        val factory = XmlPullParserFactory.newInstance()
-        val parser = factory.newPullParser()
-        parser.setInput(StringReader(xml))
-
-        var currentName = ""
-        var currentPath = ""
-        var currentIsDir = false
-        var currentSize = 0L
-        var currentContentType = ""
-        var inResponse = false
-        var inHref = false
-        var inDisplayName = false
-        var inResourceType = false
-        var inCollection = false
-        var inContentLength = false
-        var inContentType = false
-
-        var eventType = parser.eventType
-        while (eventType != XmlPullParser.END_DOCUMENT) {
-            when (eventType) {
-                XmlPullParser.START_TAG -> {
-                    val tagName = parser.name.lowercase()
-                    when {
-                        tagName == "response" -> {
-                            inResponse = true
-                            currentName = ""
-                            currentPath = ""
-                            currentIsDir = false
-                            currentSize = 0L
-                            currentContentType = ""
-                            inCollection = false
-                        }
-                        tagName == "href" -> inHref = true
-                        tagName == "displayname" -> inDisplayName = true
-                        tagName == "resourcetype" -> inResourceType = true
-                        tagName == "collection" -> if (inResourceType) inCollection = true
-                        tagName == "getcontentlength" -> inContentLength = true
-                        tagName == "getcontenttype" -> inContentType = true
-                    }
-                }
-                XmlPullParser.TEXT -> {
-                    val text = parser.text
-                    if (inHref) currentPath = text
-                    if (inDisplayName) currentName = text
-                    if (inContentLength) currentSize = text.toLongOrNull() ?: 0L
-                    if (inContentType) currentContentType = text
-                }
-                XmlPullParser.END_TAG -> {
-                    val tagName = parser.name.lowercase()
-                    when {
-                        tagName == "response" -> {
-                            if (inResponse && currentPath.isNotBlank()) {
-                                // 跳过根路径自身
-                                val displayName = currentName.ifBlank {
-                                    currentPath.trimEnd('/').substringAfterLast('/')
-                                }
-                                if (displayName.isNotBlank() && currentPath.trimEnd('/') != parentPath.trimEnd('/')) {
-                                    files.add(
-                                        WebDavFile(
-                                            name = displayName,
-                                            path = currentPath,
-                                            isDirectory = inCollection,
-                                            size = currentSize,
-                                            contentType = currentContentType
-                                        )
-                                    )
-                                }
-                            }
-                            inResponse = false
-                        }
-                        tagName == "href" -> inHref = false
-                        tagName == "displayname" -> inDisplayName = false
-                        tagName == "resourcetype" -> inResourceType = false
-                        tagName == "collection" -> inCollection = false
-                        tagName == "getcontentlength" -> inContentLength = false
-                        tagName == "getcontenttype" -> inContentType = false
-                    }
-                }
-            }
-            eventType = parser.next()
-        }
-        return files
     }
 }

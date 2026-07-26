@@ -69,7 +69,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    // 显式锁定 material3 版本，避免被传递依赖拉到与 animation-core 不匹配的旧版导致 NoSuchMethodError
+    implementation("androidx.compose.material3:material3:1.2.1")
     implementation("androidx.compose.material:material-icons-extended")
 
     // Activity & Lifecycle
@@ -106,7 +107,17 @@ dependencies {
     // DataStore (for preferences)
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
+    // Encrypted storage for WebDAV credentials
+    implementation("androidx.security:security-crypto:1.0.0")
+
+    // DocumentFile (SAF) for local folder import
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // Unit tests (JVM)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.1")
 }

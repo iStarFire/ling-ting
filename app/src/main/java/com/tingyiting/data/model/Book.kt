@@ -5,7 +5,9 @@ data class Book(
     val title: String,
     val author: String = "",
     val coverUrl: String = "",
-    val webdavUrl: String,
+    val webdavUrl: String = "",
+    val rootPath: String = "",
+    val currentTrackIndex: Int = 0,
     val duration: Long = 0,
     val position: Long = 0
 )

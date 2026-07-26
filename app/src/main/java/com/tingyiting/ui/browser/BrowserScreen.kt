@@ -1,6 +1,8 @@
 package com.tingyiting.ui.browser
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,30 +30,67 @@ fun BrowserScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // 批量导入成功后跳回书架
+    LaunchedEffect(state.importDone) {
+        if (state.importDone) {
+            viewModel.clearImportResult()
+            onNavigateToBookshelf()
+        }
+    }
+
+    // 导入失败时提示
+    LaunchedEffect(state.importError) {
+        state.importError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearImportResult()
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = state.currentPath,
+                        text = if (state.selectedPaths.isNotEmpty())
+                            "已选择 ${state.selectedPaths.size} 个目录"
+                        else
+                            state.currentPath,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (!viewModel.goBack()) {
-                            onNavigateToBookshelf()
+                    if (state.selectedPaths.isNotEmpty()) {
+                        IconButton(onClick = viewModel::clearSelection) {
+                            Icon(Icons.Default.Close, contentDescription = "取消选择")
                         }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    } else {
+                        IconButton(onClick = {
+                            if (!viewModel.goBack()) {
+                                onNavigateToBookshelf()
+                            }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
                     }
                 },
                 actions = {
-                    if (state.currentPath != "/") {
-                        IconButton(onClick = { viewModel.navigateToRoot() }) {
-                            Icon(Icons.Default.Home, contentDescription = "根目录")
+                    if (state.selectedPaths.isEmpty()) {
+                        // 非选择模式：仅提供"回到根目录"
+                        if (state.currentPath != "/") {
+                            IconButton(onClick = { viewModel.navigateToRoot() }) {
+                                Icon(Icons.Default.Home, contentDescription = "根目录")
+                            }
+                        }
+                    } else {
+                        // 选择模式：右侧出现"导入"按钮（选中目录数量）
+                        Button(
+                            onClick = { scope.launch { viewModel.importDirectories(state.selectedPaths.toList()) } },
+                            enabled = !state.isImporting
+                        ) {
+                            Text("导入 (${state.selectedPaths.size})")
                         }
                     }
                 },
@@ -60,7 +99,8 @@ fun BrowserScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(
             modifier = Modifier
@@ -118,6 +158,7 @@ fun BrowserScreen(
                     }
                 }
                 else -> {
+                    val selecting = state.selectedPaths.isNotEmpty()
                     LazyColumn(
                         contentPadding = PaddingValues(8.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -125,16 +166,59 @@ fun BrowserScreen(
                         items(state.files, key = { it.path }) { file ->
                             FileItem(
                                 file = file,
+                                selected = file.isDirectory && state.selectedPaths.contains(file.path),
+                                selectionActive = selecting,
                                 onClick = {
                                     if (file.isDirectory) {
-                                        viewModel.enterDirectory(file.path)
+                                        if (selecting) {
+                                            viewModel.toggleSelection(file.path)
+                                        } else {
+                                            viewModel.enterDirectory(file.path)
+                                        }
                                     } else {
-                                        scope.launch {
-                                            val bookId = viewModel.addBookToShelf(file)
-                                            onNavigateToPlayer(bookId)
+                                        // 非选择模式下，点击单个音频文件直接加入书架并播放
+                                        if (!selecting) {
+                                            scope.launch {
+                                                val bookId = viewModel.addBookToShelf(file)
+                                                onNavigateToPlayer(bookId)
+                                            }
                                         }
                                     }
+                                },
+                                onLongClick = {
+                                    if (file.isDirectory) viewModel.toggleSelection(file.path)
                                 }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 导入中遮罩（确定进度条 + i/total 文本）
+            if (state.isImporting) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(enabled = false, onClick = {}),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        tonalElevation = 4.dp,
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(24.dp).widthIn(max = 320.dp)
+                        ) {
+                            LinearProgressIndicator(
+                                progress = { state.importProgressFraction ?: 0f },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = state.importProgress ?: "正在索引目录...",
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -144,8 +228,16 @@ fun BrowserScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FileItem(file: WebDavFile, onClick: () -> Unit) {
+private fun FileItem(
+    file: WebDavFile,
+    selected: Boolean,
+    selectionActive: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val showCheckbox = selectionActive && file.isDirectory
     ListItem(
         headlineContent = {
             Text(
@@ -170,7 +262,19 @@ private fun FileItem(file: WebDavFile, onClick: () -> Unit) {
                     MaterialTheme.colorScheme.onSurfaceVariant
             )
         },
-        modifier = Modifier.clickable(onClick = onClick)
+        trailingContent = if (showCheckbox) {
+            {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onClick() }
+                )
+            }
+        } else null,
+        modifier = Modifier.combinedClickable(
+            enabled = true,
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
     )
 }
 

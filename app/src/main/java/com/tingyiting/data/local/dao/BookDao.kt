@@ -16,6 +16,9 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE webdavUrl = :url LIMIT 1")
     suspend fun getBookByUrl(url: String): BookEntity?
 
+    @Query("SELECT * FROM books WHERE rootPath = :rootPath LIMIT 1")
+    suspend fun getBookByRootPath(rootPath: String): BookEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(book: BookEntity): Long
 

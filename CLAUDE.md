@@ -76,3 +76,26 @@ GitHub Actions 自动构建输出在 `app/build/outputs/apk/debug/app-debug.apk`
 - 所有网络请求通过 Repository 层封装
 - 数据库操作通过 Room DAO + Repository 封装
 - 新增功能遵循 KISS/YAGNI 原则保持极简
+
+## 单元测试（UT）强制要求与 TDD 流程
+
+**所有新增功能与 Bug 修复，必须同时实现单元测试（UT）。** 无 UT 的代码视为未完成。
+
+- 采用 **TDD（测试驱动开发）** 思想：**先写测试，再写实现**。
+- 标准流程：
+  1. 明确需求与边界条件 → 先编写对应 UT（此时应能编译/运行失败，因为实现尚未完成）。
+  2. 再编写产品代码，使测试通过。
+  3. 重构并保持测试全绿。
+- **UT 覆盖范围**（至少包含）：
+  - 纯逻辑/解析类（如 XML/JSON 解析、路径归一、数据转换）必须有对应测试。
+  - Repository、ViewModel 的关键业务分支（成功/失败/边界）。
+  - 数据库迁移（Migration）的正确性。
+- **测试位置与命名**：
+  - 单元测试放在 `app/src/test/java/<包路径>/` 下，与源文件包结构一致。
+  - 测试类命名为 `<被测类名>Test`，方法命名为 `should_预期_当_场景`。
+- **运行命令**：
+  ```bash
+  ./gradlew testDebugUnitTest        # 运行全部单元测试
+  ./gradlew testDebugUnitTest --tests "*WebDavPropfindParserTest"  # 运行指定测试
+  ```
+- 提交前必须确保 `./gradlew testDebugUnitTest` 全部通过。
