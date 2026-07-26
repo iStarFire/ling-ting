@@ -1,10 +1,14 @@
 package com.tingyiting.ui.player
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,9 +32,10 @@ fun PlayerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var showTrackSheet by remember { mutableStateOf(false) }
+    val trackSheetState = rememberModalBottomSheetState()
 
     BoxWithConstraints {
-        // 使用 BoxWithConstraints 读取可用高度
         val isLandscape = maxWidth > maxHeight
 
         Scaffold(
@@ -74,7 +79,6 @@ fun PlayerScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = if (isLandscape) Arrangement.Center else Arrangement.SpaceEvenly
                     ) {
-                        // 封面占位
                         if (!isLandscape) {
                             Box(
                                 modifier = Modifier
@@ -92,7 +96,6 @@ fun PlayerScreen(
                             }
                         }
 
-                        // 书名
                         Text(
                             text = state.title,
                             style = MaterialTheme.typography.headlineSmall,
@@ -102,6 +105,24 @@ fun PlayerScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = if (isLandscape) 0.dp else 16.dp)
                         )
+
+                        // 多集信息
+                        if (state.isPlaylist) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "第 ${state.currentTrackIndex + 1} / ${state.trackCount} 集",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = state.trackTitle,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
 
                         // 进度条
                         Column(modifier = Modifier.fillMaxWidth()) {
@@ -138,7 +159,6 @@ fun PlayerScreen(
                             horizontalArrangement = Arrangement.Center,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            // 睡眠定时器
                             IconButton(onClick = { showSleepTimerDialog = true }) {
                                 Icon(
                                     imageVector = if (state.sleepTimerRemaining != null)
@@ -153,9 +173,21 @@ fun PlayerScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.width(32.dp))
+                            if (state.isPlaylist) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { viewModel.prevTrack() },
+                                    enabled = state.currentTrackIndex > 0
+                                ) {
+                                    Icon(
+                                        Icons.Default.SkipPrevious,
+                                        contentDescription = "上一集",
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
 
-                            // 播放/暂停
                             FilledIconButton(
                                 onClick = { viewModel.togglePlayPause() },
                                 modifier = Modifier.size(72.dp),
@@ -173,10 +205,33 @@ fun PlayerScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.width(32.dp))
+                            if (state.isPlaylist) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { viewModel.nextTrack() },
+                                    enabled = state.currentTrackIndex < state.trackCount - 1
+                                ) {
+                                    Icon(
+                                        Icons.Default.SkipNext,
+                                        contentDescription = "下一集",
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
 
-                            // 占位（保持对称）
-                            Box(modifier = Modifier.size(48.dp))
+                            IconButton(onClick = {
+                                if (state.isPlaylist) showTrackSheet = true
+                            }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                                    contentDescription = "选集",
+                                    tint = if (state.isPlaylist)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                )
+                            }
                         }
                     }
                 }
@@ -184,7 +239,6 @@ fun PlayerScreen(
         }
     }
 
-    // 睡眠定时器对话框
     if (showSleepTimerDialog) {
         SleepTimerDialog(
             currentRemaining = state.sleepTimerRemaining,
@@ -192,6 +246,54 @@ fun PlayerScreen(
             onCancel = { viewModel.cancelSleepTimer() },
             onDismiss = { showSleepTimerDialog = false }
         )
+    }
+
+    if (showTrackSheet && state.isPlaylist) {
+        ModalBottomSheet(
+            onDismissRequest = { showTrackSheet = false },
+            sheetState = trackSheetState
+        ) {
+            Text(
+                text = "选集（共 ${state.trackCount} 集）",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxHeight(0.7f)
+                    .padding(bottom = 24.dp)
+            ) {
+                itemsIndexed(state.tracks) { index, track ->
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                text = track.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (index == state.currentTrackIndex)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        leadingContent = {
+                            Text(
+                                text = "${index + 1}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (index == state.currentTrackIndex)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        modifier = Modifier.clickable {
+                            viewModel.selectTrack(index)
+                            showTrackSheet = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 

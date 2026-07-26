@@ -3,6 +3,7 @@ package com.tingyiting.ui.server
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Visibility
@@ -22,23 +23,26 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ServerConfigScreen(
-    onConfigured: () -> Unit,
+    onBack: () -> Unit,
     viewModel: ServerConfigViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showPassword by remember { mutableStateOf(false) }
 
-    // 配置成功时跳转
-    LaunchedEffect(state.isConfigured) {
-        if (state.isConfigured) {
-            onConfigured()
-        }
+    // 连接测试成功并保存后自动返回账号页
+    LaunchedEffect(state.isSaved) {
+        if (state.isSaved) onBack()
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("听一听") },
+                title = { Text(if (state.isEditing) "编辑 WebDAV" else "添加 WebDAV") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -53,7 +57,7 @@ fun ServerConfigScreen(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Icon(
                 imageVector = Icons.Default.Cloud,
@@ -74,7 +78,7 @@ fun ServerConfigScreen(
                 text = "通过 Alist WebDAV 连接你的网盘",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp, bottom = 32.dp)
+                modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
             )
 
             OutlinedTextField(
@@ -136,7 +140,7 @@ fun ServerConfigScreen(
                 } else {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("测试连接")
+                    Text("测试并保存")
                 }
             }
 

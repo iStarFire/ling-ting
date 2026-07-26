@@ -1,6 +1,7 @@
 package com.tingyiting.ui.server
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tingyiting.data.repository.WebDavRepository
@@ -16,7 +17,8 @@ data class ServerConfigUiState(
     val password: String = "",
     val isTesting: Boolean = false,
     val testResult: String? = null,
-    val isConfigured: Boolean = false
+    val isEditing: Boolean = false,
+    val isSaved: Boolean = false
 )
 
 @HiltViewModel
@@ -27,6 +29,18 @@ class ServerConfigViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(ServerConfigUiState())
     val uiState = _uiState.asStateFlow()
+
+    init {
+        // 编辑模式：预填已有配置（密码留空，提交时若为空则保留原密码）
+        val existing = webDavRepository.getConfig()
+        if (existing != null) {
+            _uiState.value = _uiState.value.copy(
+                baseUrl = existing.baseUrl,
+                username = existing.username,
+                isEditing = true
+            )
+        }
+    }
 
     fun updateBaseUrl(url: String) {
         _uiState.value = _uiState.value.copy(baseUrl = url, testResult = null)
@@ -42,7 +56,8 @@ class ServerConfigViewModel @Inject constructor(
 
     fun testConnection() {
         val state = _uiState.value
-        if (state.baseUrl.isBlank()) {
+        val baseUrl = state.baseUrl.trimEnd('/')
+        if (baseUrl.isBlank()) {
             _uiState.value = state.copy(testResult = "请输入服务器地址")
             return
         }
@@ -50,26 +65,33 @@ class ServerConfigViewModel @Inject constructor(
         _uiState.value = state.copy(isTesting = true, testResult = null)
 
         viewModelScope.launch {
-            webDavRepository.configure(
-                baseUrl = state.baseUrl.trimEnd('/'),
-                username = state.username,
-                password = state.password
-            )
+            // 密码留空且已存在配置时，复用已保存密码
+            val existing = webDavRepository.getConfig()
+            val effectivePassword =
+                if (state.password.isBlank() && existing != null) existing.password else state.password
 
-            val result = webDavRepository.testConnection()
+            val result = webDavRepository.testConnection(baseUrl, state.username, effectivePassword)
             result.fold(
                 onSuccess = {
+                    webDavRepository.persist(baseUrl, state.username, effectivePassword)
                     _uiState.value = _uiState.value.copy(
                         isTesting = false,
-                        testResult = "✅ 连接成功",
-                        isConfigured = true
+                        testResult = "✅ 连接成功，已保存",
+                        isSaved = true
                     )
                 },
                 onFailure = { e ->
+                    Log.e("ServerConfig", "WebDAV 连接失败 baseUrl=$baseUrl user=${state.username}", e)
+                    val reason = buildString {
+                        append(e.javaClass.simpleName)
+                        if (!e.message.isNullOrBlank()) append(": ${e.message}")
+                        e.cause?.let { c ->
+                            append(" (cause: ${c.javaClass.simpleName}: ${c.message ?: "无信息"})")
+                        }
+                    }
                     _uiState.value = _uiState.value.copy(
                         isTesting = false,
-                        testResult = "❌ 连接失败: ${e.message}",
-                        isConfigured = false
+                        testResult = "❌ 连接失败: $reason"
                     )
                 }
             )
