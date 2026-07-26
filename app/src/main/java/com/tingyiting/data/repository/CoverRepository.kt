@@ -94,9 +94,27 @@ open class CoverRepository @Inject constructor(
     }
 
     private fun downloadCover(bookId: Long, imageUrl: String): String {
+        // 豆瓣对无 Referer/UA 不完整的图片请求返回 HTTP 418（I'm a teapot，反爬）。
+        // img1/2/3.doubanio.com 是互为镜像的三个图床，任一可用即可；先按当前主机试一次，
+        // 失败则按 img1→img2→img3 顺序轮询，避免单主机被风控拦截时直接报错。
+        val candidates = buildImageCandidates(imageUrl)
+        var lastError: IOException? = null
+        for (candidate in candidates) {
+            try {
+                return doDownloadCover(bookId, candidate)
+            } catch (e: IOException) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IOException("封面下载失败")
+    }
+
+    private fun doDownloadCover(bookId: Long, imageUrl: String): String {
         val request = Request.Builder()
             .url(imageUrl)
             .header("User-Agent", USER_AGENT)
+            .header("Referer", "https://book.douban.com/")
+            .header("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
             .build()
         return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("封面下载失败：HTTP ${response.code}")
@@ -110,6 +128,17 @@ open class CoverRepository @Inject constructor(
                 coverFile.outputStream().use { output -> input.copyTo(output) }
             } ?: throw IOException("封面下载内容为空")
             Uri.fromFile(coverFile).toString()
+        }
+    }
+
+    /** 生成 img 主机候选列表：当前主机优先，再依次尝试 img2/img3。 */
+    private fun buildImageCandidates(imageUrl: String): List<String> {
+        val match = Regex("""(img)(\d)(\.doubanio\.com)""").find(imageUrl)
+            ?: return listOf(imageUrl)
+        val currentIdx = match.groupValues[2].toIntOrNull() ?: return listOf(imageUrl)
+        val indices = listOf(currentIdx, (currentIdx % 3) + 1, ((currentIdx + 1) % 3) + 1).distinct()
+        return indices.map { idx ->
+            imageUrl.replace(match.value, "img$idx.doubanio.com")
         }
     }
 

@@ -1,29 +1,38 @@
 package com.tingyiting.ui.navigation
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -36,7 +45,7 @@ import com.tingyiting.playback.PlaybackInfo
 import com.tingyiting.ui.accounts.AccountsScreen
 import com.tingyiting.ui.bookshelf.BookshelfScreen
 import com.tingyiting.ui.browser.BrowserScreen
-import com.tingyiting.ui.components.BookCover
+import com.tingyiting.ui.components.CoverArtwork
 import com.tingyiting.ui.player.PlayerScreen
 import com.tingyiting.ui.server.ServerConfigScreen
 
@@ -48,6 +57,7 @@ fun AppNavigation(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val playbackInfo by playbackViewModel.playbackInfo.collectAsStateWithLifecycle()
+    val coverUrl by playbackViewModel.coverUrl.collectAsStateWithLifecycle()
     // 仅在顶层页（书架 / 账号）显示底部导航，浏览/播放/编辑子页隐藏
     val showBottomBar = currentRoute == Screen.Bookshelf.route || currentRoute == Screen.Accounts.route
 
@@ -63,7 +73,10 @@ fun AppNavigation(
                     )
                     PlayerShortcutItem(
                         playbackInfo = playbackInfo,
+                        coverUrl = coverUrl,
                         onClick = {
+                            // 点击中间按钮：若当前暂停则恢复播放，然后跳转播放页
+                            playbackViewModel.resumeIfPaused()
                             playbackInfo?.let {
                                 navController.navigate(Screen.Player.createRoute(it.bookId))
                             }
@@ -72,8 +85,8 @@ fun AppNavigation(
                     NavigationBarItem(
                         selected = currentRoute == Screen.Accounts.route,
                         onClick = { navigateTopLevel(navController, Screen.Accounts.route) },
-                        icon = { Icon(Icons.Filled.AccountCircle, contentDescription = null) },
-                        label = { Text("账号") }
+                        icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                        label = { Text("设置") }
                     )
                 }
             }
@@ -156,80 +169,94 @@ fun AppNavigation(
 @Composable
 private fun RowScope.PlayerShortcutItem(
     playbackInfo: PlaybackInfo?,
+    coverUrl: String?,
     onClick: () -> Unit
 ) {
+    val enabled = playbackInfo != null
+    val progress = if (enabled && playbackInfo!!.duration > 0) {
+        playbackInfo.currentPosition.toFloat() / playbackInfo.duration
+    } else 0f
     NavigationBarItem(
         selected = false,
-        enabled = playbackInfo != null,
+        enabled = enabled,
         onClick = onClick,
         icon = {
             PlayerShortcutIcon(
                 title = playbackInfo?.trackTitle.orEmpty(),
-                statusIcon = when {
-                    playbackInfo == null -> Icons.Filled.Headphones
-                    playbackInfo.isPlaying -> Icons.Filled.Pause
-                    else -> Icons.Filled.PlayArrow
-                },
-                enabled = playbackInfo != null
+                coverUrl = coverUrl.orEmpty(),
+                isPlaying = playbackInfo?.isPlaying == true,
+                enabled = enabled,
+                progress = progress
             )
         },
-        label = { Text("播放") }
+        label = null
     )
 }
 
+/**
+ * 底部导航中间的播放快捷入口：
+ * - 有当前播放：圆形封面，播放中缓慢自转，外圈展示播放进度
+ * - 无播放：占位播放图标
+ * - 视觉上比侧边两项更紧凑，整体高度更小
+ */
 @Composable
 private fun PlayerShortcutIcon(
     title: String,
-    statusIcon: ImageVector,
-    enabled: Boolean
+    coverUrl: String,
+    isPlaying: Boolean,
+    enabled: Boolean,
+    progress: Float
 ) {
-    val borderColor = if (enabled) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.outlineVariant
-    }
+    val transition = rememberInfiniteTransition(label = "player-rot")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 12000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+
     Box(
-        modifier = Modifier.size(width = 66.dp, height = 58.dp),
+        modifier = Modifier.size(48.dp),
         contentAlignment = Alignment.Center
     ) {
-        Surface(
-            shape = MaterialTheme.shapes.medium,
-            border = BorderStroke(2.dp, borderColor),
-            tonalElevation = if (enabled) 4.dp else 0.dp,
-            shadowElevation = if (enabled) 6.dp else 0.dp
+        // 外圈进度环
+        CircularProgressIndicator(
+            progress = { progress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxSize(),
+            strokeWidth = 3.dp,
+            color = if (enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outlineVariant,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            strokeCap = StrokeCap.Round
+        )
+        // 封面（圆形，播放中旋转）
+        Box(
+            modifier = Modifier
+                .padding(4.dp)
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .graphicsLayer {
+                    rotationZ = if (isPlaying) rotation else 0f
+                },
+            contentAlignment = Alignment.Center
         ) {
             if (enabled) {
-                BookCover(
+                CoverArtwork(
                     title = title,
-                    modifier = Modifier.size(50.dp),
-                    cornerRadius = 10.dp,
-                    fontSize = MaterialTheme.typography.titleLarge.fontSize
+                    coverUrl = coverUrl,
+                    modifier = Modifier.fillMaxSize(),
+                    cornerRadius = 20.dp,
+                    fallbackFontSize = 14.sp
                 )
             } else {
-                Box(
-                    modifier = Modifier.size(50.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = statusIcon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        Surface(
-            modifier = Modifier.size(28.dp),
-            shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 0.92f else 0.48f),
-            contentColor = MaterialTheme.colorScheme.onPrimary
-        ) {
-            Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = statusIcon,
+                    imageVector = Icons.Filled.PlayArrow,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
