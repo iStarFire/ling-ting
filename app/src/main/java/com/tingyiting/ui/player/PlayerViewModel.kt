@@ -1,7 +1,10 @@
 package com.tingyiting.ui.player
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tingyiting.data.model.CoverCrop
@@ -10,11 +13,13 @@ import com.tingyiting.data.model.Track
 import com.tingyiting.data.repository.BookRepository
 import com.tingyiting.data.repository.CoverRepository
 import com.tingyiting.playback.AudioPlayer
+import com.tingyiting.service.PlaybackService
 import com.tingyiting.playback.PlayState
 import com.tingyiting.playback.PlayableItem
 import com.tingyiting.playback.PlaybackError
 import com.tingyiting.playback.PlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,7 +68,8 @@ class PlayerViewModel @Inject constructor(
     private val player: AudioPlayer,
     private val playbackState: PlaybackState,
     private val coverRepository: CoverRepository? = null,
-    private val sleepTimerPrefs: SleepTimerPrefs? = null
+    private val sleepTimerPrefs: SleepTimerPrefs? = null,
+    @ApplicationContext private val appContext: Context? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -212,7 +218,7 @@ class PlayerViewModel @Inject constructor(
         }
         player.setPlaylist(items, startIndex, startPosition)
         player.prepare()
-        player.play()
+        playAudio()
         playbackState.setCurrentBook(book.id, tracks.size)
     }
 
@@ -250,7 +256,7 @@ class PlayerViewModel @Inject constructor(
             startPosition
         )
         player.prepare()
-        player.play()
+        playAudio()
         playbackState.setCurrentBook(book.id, 1)
     }
 
@@ -358,6 +364,22 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 开始播放并确保后台播放服务（MediaSession / 灵动岛 / 锁屏通知）处于运行态。
+     *
+     * 音频焦点被其他应用抢占导致本播放器暂停后，MediaSessionService 可能已被系统回收；
+     * 若恢复播放时没有重新拉起服务，媒体会话不会重建，表现为灵动岛/锁屏不展示，
+     * 且进程失去前台服务保护，几分钟后被系统杀死（再次打开自动续播）。
+     * 因此每次真正 play 前都重启一次服务，让 MediaSession 重新绑定到同一个 ExoPlayer 单例。
+     */
+    private fun playAudio() {
+        // 仅在有可用 Context 时重启后台播放服务（单元测试中 Context 为 null，跳过）。
+        appContext?.let {
+            ContextCompat.startForegroundService(it, Intent(it, PlaybackService::class.java))
+        }
+        player.play()
+    }
+
     fun togglePlayPause() {
         if (_uiState.value.playbackError != null) {
             _uiState.update { it.copy(playbackError = null, isBuffering = true) }
@@ -367,13 +389,13 @@ class PlayerViewModel @Inject constructor(
         when (player.playState) {
             PlayState.IDLE -> {
                 player.prepare()
-                player.play()
+                playAudio()
             }
             PlayState.ENDED -> {
                 if (player.itemCount > 1) player.seekTo(player.currentItemIndex, 0) else player.seekTo(0)
-                player.play()
+                playAudio()
             }
-            else -> if (player.playWhenReady) player.pause() else player.play()
+            else -> if (player.playWhenReady) player.pause() else playAudio()
         }
     }
 
@@ -411,7 +433,7 @@ class PlayerViewModel @Inject constructor(
             )
         }
         player.prepare()
-        player.play()
+        playAudio()
     }
 
     fun seekTo(position: Long) {
@@ -447,7 +469,7 @@ class PlayerViewModel @Inject constructor(
         saveProgress()
         val target = effectiveStartPosition(resumePosition(track), activeBook)
         player.seekTo(index, target)
-        player.play()
+        playAudio()
     }
 
     fun saveProgress(positionOverride: Long? = null) {

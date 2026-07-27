@@ -41,6 +41,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun initializePlayerAndSession() {
+        // 服务可能因音频焦点抢占/系统回收后重建，仅在不重复创建时初始化，避免泄漏旧 MediaSession。
+        if (mediaSession != null) return
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, intent,
