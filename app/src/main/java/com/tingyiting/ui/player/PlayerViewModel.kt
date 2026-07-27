@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tingyiting.data.model.CoverCrop
@@ -373,9 +372,16 @@ class PlayerViewModel @Inject constructor(
      * 因此每次真正 play 前都重启一次服务，让 MediaSession 重新绑定到同一个 ExoPlayer 单例。
      */
     private fun playAudio() {
-        // 仅在有可用 Context 时重启后台播放服务（单元测试中 Context 为 null，跳过）。
-        appContext?.let {
-            ContextCompat.startForegroundService(it, Intent(it, PlaybackService::class.java))
+        // 仅在有可用 Context 时（非测试环境）重启后台播放服务。
+        // 使用普通 startService 而非 startForegroundService，避免系统 5 秒超时 ANR：
+        // Media3 会在播放实际开始时自行调用 startForeground 拉起通知并保持前台保护。
+        appContext?.let { ctx ->
+            val intent = Intent(ctx, PlaybackService::class.java)
+            try {
+                ctx.startService(intent)
+            } catch (_: IllegalStateException) {
+                // Android 12+ 后台启动前台服务时抛出，正常流程不会进入此分支。
+            }
         }
         player.play()
     }
