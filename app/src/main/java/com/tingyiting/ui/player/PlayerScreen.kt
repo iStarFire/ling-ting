@@ -13,7 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.text.KeyboardOptions
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Equalizer
@@ -51,9 +52,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
@@ -67,7 +66,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -93,7 +91,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -153,7 +150,7 @@ fun PlayerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = if (isLandscape) Arrangement.Center else Arrangement.SpaceEvenly
             ) {
-                // 顶部行：返回按钮，单独一行避免与书架页之间切换产生抖动
+                // 顶部行：返回箭头 + 当前集标题(居中) + 选集按钮，三者对称分布
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -163,7 +160,40 @@ fun PlayerScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
+                    Text(
+                        text = if (state.isPlaylist) state.trackTitle else state.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                    )
+                    if (state.isPlaylist) {
+                        IconButton(onClick = { showTrackSheet = true }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.QueueMusic,
+                                contentDescription = "选集",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    } else {
+                        // 占位 Spacer，保持左右对称（图标宽度 ≈ 48dp IconButton）
+                        Spacer(modifier = Modifier.width(48.dp))
+                    }
                 }
+
+                Text(
+                    text = state.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = if (isLandscape) 0.dp else 8.dp)
+                )
 
                 if (!isLandscape) {
                     Artwork(
@@ -172,50 +202,6 @@ fun PlayerScreen(
                         showLoading = state.isInitialLoading || state.isBuffering,
                         onEdit = { showCoverSheet = true },
                         modifier = Modifier.size(260.dp)
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = state.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = if (isLandscape) 0.dp else 16.dp)
-                    )
-                    if (state.isPlaylist) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = state.trackTitle,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                // 选集移到文本下方，独占一行，避免与定时/跳过头尾挤在同一行造成换行
-                if (state.isPlaylist) {
-                    AssistChip(
-                        onClick = { showTrackSheet = true },
-                        label = {
-                            Text(
-                                text = "选集 ${state.currentTrackIndex + 1}/${state.trackCount}",
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
                     )
                 }
 
@@ -532,7 +518,12 @@ private fun Artwork(
                     .size(18.dp)
             )
         }
-        if (showLoading) {
+        // 加载中遮罩用淡入淡出消除闪烁
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showLoading,
+            enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(200)),
+            exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -814,7 +805,6 @@ private fun SleepTimerSheet(
     onDismiss: () -> Unit
 ) {
     var showCustomInput by remember { mutableStateOf(false) }
-    var customMinutesText by remember { mutableStateOf("") }
     val isLastActive = when (lastChoice) {
         is TimerChoice.Minutes -> activeMinutesRemaining != null
         is TimerChoice.Episodes -> activeEpisodesRemaining != null
@@ -824,8 +814,7 @@ private fun SleepTimerSheet(
 
     // 与片头片尾抽屉保持一致的体验：高度锁定，只能打开 / 关闭。
     val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true,
-        confirmValueChange = { newValue -> newValue == SheetValue.Expanded }
+        skipPartiallyExpanded = true
     )
 
     ModalBottomSheet(
@@ -861,52 +850,85 @@ private fun SleepTimerSheet(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            Text("按时间", style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(8.dp))
+            // 滑条分钟数始终保留 state，避免切回重置；初始值跟随当前 active 分钟
+            val customMinutes = remember { mutableStateOf((activeMinutesRemaining ?: 30).toFloat()) }
+            // 标题行：默认显示 "按时间" + 纯文字 "自定义"；自定义模式下 "按时间" 换成 X，"自定义" 换成 √
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                listOf(15, 30, 60, 90).forEach { min ->
-                    FilterChip(
-                        selected = activeMinutesRemaining == min,
-                        onClick = {
-                            onApply(TimerChoice.Minutes(min))
-                            showCustomInput = false
-                            onDismiss()
-                        },
-                        label = { Text("${min}分") }
+                if (showCustomInput) {
+                    // 自定义模式：左侧 X 取消（占据"按时间"位置）
+                    IconButton(
+                        onClick = { showCustomInput = false },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "取消自定义")
+                    }
+                } else {
+                    Text(
+                        text = "按时间",
+                        style = MaterialTheme.typography.titleSmall
                     )
                 }
-                FilterChip(
-                    selected = showCustomInput,
-                    onClick = { showCustomInput = !showCustomInput },
-                    label = { Text("自定义") }
-                )
-            }
-            if (showCustomInput) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = customMinutesText,
-                        onValueChange = { input ->
-                            customMinutesText = input.filter { it.isDigit() }.take(3)
-                        },
-                        label = { Text("分钟") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
+                Spacer(modifier = Modifier.weight(1f))
+                if (showCustomInput) {
+                    // 自定义模式：右侧 √ 确认（占据"自定义"位置）
+                    IconButton(
                         onClick = {
-                            val n = customMinutesText.toIntOrNull()
-                            if (n != null && n > 0) {
-                                onApply(TimerChoice.Minutes(n))
+                            onApply(TimerChoice.Minutes(customMinutes.value.toInt()))
+                            onDismiss()
+                        },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = "确认")
+                    }
+                } else {
+                    // 默认模式：右侧纯文字"自定义"（与左侧"按时间"对称风格）
+                    Text(
+                        text = "自定义",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable { showCustomInput = true }
+                            .padding(8.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (showCustomInput) {
+                Text(
+                    text = "${customMinutes.value.toInt()} 分",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+                Slider(
+                    value = customMinutes.value,
+                    onValueChange = { customMinutes.value = it },
+                    valueRange = 0f..90f,
+                    steps = 89,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                )
+            } else {
+                // 时间预设 chip 行（自动换行防挤压）
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    listOf(15, 30, 60, 90).forEach { min ->
+                        FilterChip(
+                            selected = activeMinutesRemaining == min,
+                            onClick = {
+                                onApply(TimerChoice.Minutes(min))
                                 onDismiss()
-                            }
-                        }
-                    ) { Text("确定") }
+                            },
+                            label = { Text("${min}分") }
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -914,8 +936,10 @@ private fun SleepTimerSheet(
             if (isPlaylist) {
                 Text("按集数", style = MaterialTheme.typography.titleSmall)
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
+                // 固定宽度 + 自动换行，避免挤在一行高度膨胀
+                androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     listOf(1, 2, 3, 5).forEach { count ->
@@ -966,11 +990,10 @@ private fun SkipIntroOutroSheet(
     val introOptions = remember(introHistory) { quickSkipOptions(introHistory) }
     val outroOptions = remember(outroHistory) { quickSkipOptions(outroHistory) }
 
-    // 高度锁定：confirmValueChange 仅允许 Expanded，确保不能拖动改高度，
-    // 只能通过点击空白 / 系统返回来关闭。
+    // 高度锁定：skipPartiallyExpanded 跳过半展开档位，
+    // 点击背景 / 下滑 / 关闭按钮均可关闭。
     val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true,
-        confirmValueChange = { newValue -> newValue == SheetValue.Expanded }
+        skipPartiallyExpanded = true
     )
 
     ModalBottomSheet(

@@ -1,11 +1,14 @@
 package com.tingyiting.ui.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
@@ -26,6 +29,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,10 +57,44 @@ import com.tingyiting.ui.components.CoverArtwork
 import com.tingyiting.ui.player.PlayerScreen
 import com.tingyiting.ui.server.ServerConfigScreen
 
+/**
+ * 播放页状态持有者：记录当前打开的播放页 bookId，null 表示播放页未打开。
+ * 播放页作为全屏覆盖层从底部滑出，覆盖在 NavHost 上方，不与根 Scaffold 交互，
+ * 彻底消除导航条显隐带来的布局跳变闪烁。
+ *
+ * visible 独立于 bookId：关闭时先将 visible 置 false 触发退出动画，
+ * 动画播完后（onExitComplete）再清 bookId，避免 AnimatedVisibility 直接
+ * 从组合树移除导致退出动画无法播放。
+ */
+class PlayerOverlayState {
+    var bookId by mutableStateOf<Long?>(null)
+        private set
+    var visible by mutableStateOf(false)
+        private set
+
+    fun open(bookId: Long) {
+        this.bookId = bookId
+        this.visible = true
+    }
+
+    fun close() {
+        this.visible = false
+    }
+
+    /** 由 AnimatedVisibility 退出动画完成后调用，清理 bookId。 */
+    fun onExited() {
+        bookId = null
+    }
+}
+
+@Composable
+fun rememberPlayerOverlayState(): PlayerOverlayState = remember { PlayerOverlayState() }
+
 @Composable
 fun AppNavigation(
     navController: NavHostController,
-    playbackViewModel: NavigationPlaybackViewModel = hiltViewModel()
+    playbackViewModel: NavigationPlaybackViewModel = hiltViewModel(),
+    playerOverlay: PlayerOverlayState = rememberPlayerOverlayState()
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -78,107 +120,130 @@ fun AppNavigation(
     }
     val miniShortcutCoverUrl = coverUrl ?: lastPlayedBook?.coverUrl
 
-    Scaffold(
-        bottomBar = {
-            if (showBottomBar) {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = currentRoute == Screen.Bookshelf.route,
-                        onClick = { navigateTopLevel(navController, Screen.Bookshelf.route) },
-                        icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
-                        label = { Text("书架") }
-                    )
-                    PlayerShortcutItem(
-                        playbackInfo = miniShortcutInfo,
-                        coverUrl = miniShortcutCoverUrl,
-                        onClick = {
-                            val info = miniShortcutInfo
-                            if (info != null) {
-                                // 有当前播放：先恢复播放再跳转；上次播放：跳转后自动载入
-                                if (playbackInfo != null) playbackViewModel.resumeIfPaused()
-                                navController.navigate(Screen.Player.createRoute(info.bookId))
+    // 路由到播放页：不经过 NavHost，直接打开覆盖层
+    val onNavigateToPlayer: (Long) -> Unit = { bookId -> playerOverlay.open(bookId) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                if (showBottomBar) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = currentRoute == Screen.Bookshelf.route,
+                            onClick = { navigateTopLevel(navController, Screen.Bookshelf.route) },
+                            icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
+                            label = { Text("书架") }
+                        )
+                        PlayerShortcutItem(
+                            playbackInfo = miniShortcutInfo,
+                            coverUrl = miniShortcutCoverUrl,
+                            onClick = {
+                                val info = miniShortcutInfo
+                                if (info != null) {
+                                    // 有当前播放：先恢复播放再跳转；上次播放：跳转后自动载入
+                                    if (playbackInfo != null) playbackViewModel.resumeIfPaused()
+                                    playerOverlay.open(info.bookId)
+                                }
                             }
+                        )
+                        NavigationBarItem(
+                            selected = currentRoute == Screen.Accounts.route,
+                            onClick = { navigateTopLevel(navController, Screen.Accounts.route) },
+                            icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                            label = { Text("设置") }
+                        )
+                    }
+                }
+            }
+        ) { padding ->
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Bookshelf.route,
+                modifier = Modifier.padding(padding)
+            ) {
+                composable(Screen.Bookshelf.route) {
+                    BookshelfScreen(
+                        onNavigateToBrowser = { navController.navigate(Screen.Browser.createRoute()) },
+                        onNavigateToReimport = { bookId, path ->
+                            navController.navigate(Screen.Browser.createReimportRoute(bookId, path))
+                        },
+                        onNavigateToPlayer = onNavigateToPlayer,
+                        onNavigateToAccounts = { navController.navigate(Screen.Accounts.route) },
+                        onNavigateToWebDav = { navController.navigate(Screen.ServerConfig.route) }
+                    )
+                }
+
+                composable(Screen.Accounts.route) {
+                    AccountsScreen(
+                        onNavigateToWebDav = { navController.navigate(Screen.ServerConfig.route) }
+                    )
+                }
+
+                composable(Screen.ServerConfig.route) {
+                    ServerConfigScreen(
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+
+                composable(
+                    route = Screen.Browser.route,
+                    arguments = listOf(
+                        navArgument("reimportBookId") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                        navArgument("reimportPath") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
                         }
                     )
-                    NavigationBarItem(
-                        selected = currentRoute == Screen.Accounts.route,
-                        onClick = { navigateTopLevel(navController, Screen.Accounts.route) },
-                        icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                        label = { Text("设置") }
+                ) {
+                    val reimportBookId = it.arguments?.getString("reimportBookId")?.toLongOrNull()
+                    val reimportPath = it.arguments?.getString("reimportPath")
+                    BrowserScreen(
+                        onNavigateToBookshelf = { navController.popBackStack() },
+                        onNavigateToPlayer = { bookId ->
+                            // 浏览器导入完成后跳到播放页：先回到书架，再打开覆盖层
+                            navController.popBackStack(Screen.Bookshelf.route, false)
+                            playerOverlay.open(bookId)
+                        },
+                        reimportBookId = reimportBookId,
+                        reimportPath = reimportPath
                     )
                 }
             }
         }
-    ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Bookshelf.route,
-            modifier = Modifier.padding(padding)
-        ) {
-            composable(Screen.Bookshelf.route) {
-                BookshelfScreen(
-                    onNavigateToBrowser = { navController.navigate(Screen.Browser.createRoute()) },
-                    onNavigateToReimport = { bookId, path ->
-                        navController.navigate(Screen.Browser.createReimportRoute(bookId, path))
-                    },
-                    onNavigateToPlayer = { bookId ->
-                        navController.navigate(Screen.Player.createRoute(bookId))
-                    },
-                    onNavigateToAccounts = { navController.navigate(Screen.Accounts.route) },
-                    onNavigateToWebDav = { navController.navigate(Screen.ServerConfig.route) }
-                )
-            }
 
-            composable(Screen.Accounts.route) {
-                AccountsScreen(
-                    onNavigateToWebDav = { navController.navigate(Screen.ServerConfig.route) }
-                )
-            }
-
-            composable(Screen.ServerConfig.route) {
-                ServerConfigScreen(
-                    onBack = { navController.popBackStack() }
-                )
-            }
-
-            composable(
-                route = Screen.Browser.route,
-                arguments = listOf(
-                    navArgument("reimportBookId") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
-                    navArgument("reimportPath") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    }
+        // 播放页覆盖层：从底部以抽屉动画滑出，覆盖在 NavHost/Scaffold 之上。
+        // Scaffold 完全不受影响 → 没有 bottomBar 显隐 → 没有闪烁。
+        // bookId 在退出动画播完后才清空，保证 AnimatedVisibility 有内容可动画。
+        val openBookId = playerOverlay.bookId
+        if (openBookId != null) {
+            BackHandler(enabled = true) { playerOverlay.close() }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = playerOverlay.visible,
+                enter = slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = tween(durationMillis = 600, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                ),
+                exit = slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = tween(durationMillis = 500, easing = androidx.compose.animation.core.FastOutSlowInEasing)
                 )
             ) {
-                val reimportBookId = it.arguments?.getString("reimportBookId")?.toLongOrNull()
-                val reimportPath = it.arguments?.getString("reimportPath")
-                BrowserScreen(
-                    onNavigateToBookshelf = { navController.popBackStack() },
-                    onNavigateToPlayer = { bookId ->
-                        navController.navigate(Screen.Player.createRoute(bookId)) {
-                            popUpTo(Screen.Bookshelf.route)
-                        }
-                    },
-                    reimportBookId = reimportBookId,
-                    reimportPath = reimportPath
+                PlayerScreen(
+                    bookId = openBookId,
+                    onNavigateBack = { playerOverlay.close() }
                 )
             }
-
-            composable(
-                route = Screen.Player.route,
-                arguments = listOf(navArgument("bookId") { type = NavType.LongType })
-            ) { backStackEntry ->
-                val bookId = backStackEntry.arguments?.getLong("bookId") ?: 0L
-                PlayerScreen(
-                    bookId = bookId,
-                    onNavigateBack = { navController.popBackStack() }
-                )
+            // 退出动画播完后清理 bookId
+            LaunchedEffect(playerOverlay.visible) {
+                if (!playerOverlay.visible) {
+                    delay(500)
+                    playerOverlay.onExited()
+                }
             }
         }
     }
