@@ -58,8 +58,25 @@ fun AppNavigation(
     val currentRoute = navBackStackEntry?.destination?.route
     val playbackInfo by playbackViewModel.playbackInfo.collectAsStateWithLifecycle()
     val coverUrl by playbackViewModel.coverUrl.collectAsStateWithLifecycle()
+    val lastPlayedBook by playbackViewModel.lastPlayedBook.collectAsStateWithLifecycle()
     // 仅在顶层页（书架 / 账号）显示底部导航，浏览/播放/编辑子页隐藏
     val showBottomBar = currentRoute == Screen.Bookshelf.route || currentRoute == Screen.Accounts.route
+
+    // 解决底部按钮与 PlayerScreen 圆形播放按钮的高度一致问题：
+    // 任何时候都展示有效内容（有当前播放则用播放信息，否则用最近播放过的专辑，仍无则占位），
+    // 让两个页面切换时大小稳定、不会跳动。
+    val miniShortcutInfo = playbackInfo ?: lastPlayedBook?.let { book ->
+        PlaybackInfo(
+            bookId = book.id,
+            isPlaying = false,
+            currentPosition = book.position,
+            duration = book.duration,
+            currentTrackIndex = 0,
+            trackTitle = book.title,
+            trackCount = 1
+        )
+    }
+    val miniShortcutCoverUrl = coverUrl ?: lastPlayedBook?.coverUrl
 
     Scaffold(
         bottomBar = {
@@ -72,13 +89,14 @@ fun AppNavigation(
                         label = { Text("书架") }
                     )
                     PlayerShortcutItem(
-                        playbackInfo = playbackInfo,
-                        coverUrl = coverUrl,
+                        playbackInfo = miniShortcutInfo,
+                        coverUrl = miniShortcutCoverUrl,
                         onClick = {
-                            // 点击中间按钮：若当前暂停则恢复播放，然后跳转播放页
-                            playbackViewModel.resumeIfPaused()
-                            playbackInfo?.let {
-                                navController.navigate(Screen.Player.createRoute(it.bookId))
+                            val info = miniShortcutInfo
+                            if (info != null) {
+                                // 有当前播放：先恢复播放再跳转；上次播放：跳转后自动载入
+                                if (playbackInfo != null) playbackViewModel.resumeIfPaused()
+                                navController.navigate(Screen.Player.createRoute(info.bookId))
                             }
                         }
                     )
@@ -218,15 +236,17 @@ private fun PlayerShortcutIcon(
         label = "rotation"
     )
 
+    // 尺寸与播放页主播放按钮 (FilledIconButton.size(80.dp)) 一致，
+    // 避免在书架页与播放页之间切换时按钮视觉上跳动。
     Box(
-        modifier = Modifier.size(48.dp),
+        modifier = Modifier.size(SHORTCUT_ICON_SIZE),
         contentAlignment = Alignment.Center
     ) {
         // 外圈进度环
         CircularProgressIndicator(
             progress = { progress.coerceIn(0f, 1f) },
             modifier = Modifier.fillMaxSize(),
-            strokeWidth = 3.dp,
+            strokeWidth = 4.dp,
             color = if (enabled) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.outlineVariant,
             trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -235,7 +255,7 @@ private fun PlayerShortcutIcon(
         // 封面（圆形，播放中旋转）
         Box(
             modifier = Modifier
-                .padding(4.dp)
+                .padding(6.dp)
                 .fillMaxSize()
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -244,13 +264,13 @@ private fun PlayerShortcutIcon(
                 },
             contentAlignment = Alignment.Center
         ) {
-            if (enabled) {
+            if (enabled && coverUrl.isNotBlank()) {
                 CoverArtwork(
                     title = title,
                     coverUrl = coverUrl,
                     modifier = Modifier.fillMaxSize(),
-                    cornerRadius = 20.dp,
-                    fallbackFontSize = 14.sp
+                    cornerRadius = 28.dp,
+                    fallbackFontSize = 16.sp
                 )
             } else {
                 Icon(
@@ -262,6 +282,8 @@ private fun PlayerShortcutIcon(
         }
     }
 }
+
+private val SHORTCUT_ICON_SIZE = 80.dp
 
 private fun navigateTopLevel(navController: NavHostController, route: String) {
     navController.navigate(route) {

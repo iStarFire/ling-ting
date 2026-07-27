@@ -615,11 +615,32 @@ class PlayerViewModel @Inject constructor(
         introSeconds: Int,
         outroEnabled: Boolean,
         outroSeconds: Int
+    ) = applySkipSettingsInternal(introEnabled, introSeconds, outroEnabled, outroSeconds, persist = true)
+
+    /**
+     * 仅在内存中应用「跳过头尾」值（用于跳过弹窗的滑杆拖动等高频调整场景），
+     * 不写数据库、不合并历史、不触发「片头跳到 introMs」之类的副作用。
+     * 提交用 [applySkipSettings]。
+     */
+    fun previewSkipSettings(
+        introEnabled: Boolean,
+        introSeconds: Int,
+        outroEnabled: Boolean,
+        outroSeconds: Int
+    ) = applySkipSettingsInternal(introEnabled, introSeconds, outroEnabled, outroSeconds, persist = false)
+
+    private fun applySkipSettingsInternal(
+        introEnabled: Boolean,
+        introSeconds: Int,
+        outroEnabled: Boolean,
+        outroSeconds: Int,
+        persist: Boolean
     ) {
         val state = _uiState.value
         if (state.bookId == 0L) return
         val introSec = introSeconds.coerceIn(0, MAX_SKIP_SECONDS)
         val outroSec = outroSeconds.coerceIn(0, MAX_SKIP_SECONDS)
+        // 总是先把当前选择同步到 UI / activeBook，保证 activeBook 与 PersistedState 一致
         _uiState.update {
             it.copy(
                 introSkipEnabled = introEnabled,
@@ -634,6 +655,8 @@ class PlayerViewModel @Inject constructor(
             outroSkipEnabled = outroEnabled,
             outroSkipSeconds = outroSec
         )
+        if (!persist) return
+
         viewModelScope.launch {
             bookRepository.updateSkipSettings(state.bookId, introEnabled, introSec, outroEnabled, outroSec)
             // 重新读取以拿到合并后的历史（Repository 内部做了去重与截断）

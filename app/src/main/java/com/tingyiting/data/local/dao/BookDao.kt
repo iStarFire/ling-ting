@@ -10,6 +10,13 @@ interface BookDao {
     @Query("SELECT * FROM books ORDER BY lastPlayedAt DESC")
     fun getAllBooks(): Flow<List<BookEntity>>
 
+    /**
+     * 取出最近一次播放过的专辑（lastPlayedAt > 0）。
+     * 给底部导航中间的播放按钮在「本次启动内尚无播放」时展示上一次听过的内容。
+     */
+    @Query("SELECT * FROM books WHERE lastPlayedAt > 0 ORDER BY lastPlayedAt DESC LIMIT 1")
+    fun getMostRecentlyPlayedBook(): Flow<BookEntity?>
+
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getBookById(id: Long): BookEntity?
 

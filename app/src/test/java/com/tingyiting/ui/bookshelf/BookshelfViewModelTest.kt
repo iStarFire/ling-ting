@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -213,6 +214,8 @@ class BookshelfViewModelTest {
     private class FakeBookDao : BookDao {
         val booksFlow = MutableStateFlow<List<BookEntity>>(emptyList())
         override fun getAllBooks(): Flow<List<BookEntity>> = booksFlow
+        override fun getMostRecentlyPlayedBook(): Flow<BookEntity?> =
+            booksFlow.map { list -> list.firstOrNull { it.lastPlayedAt > 0 } }
         override suspend fun getBookById(id: Long): BookEntity? =
             booksFlow.value.firstOrNull { it.id == id }
         override suspend fun getBookByUrl(url: String): BookEntity? = null

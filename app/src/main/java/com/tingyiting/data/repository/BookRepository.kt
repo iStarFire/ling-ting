@@ -24,6 +24,10 @@ open class BookRepository @Inject constructor(
         entities.map { it.toBook() }
     }
 
+    /** 最近一次播放过的专辑（首次启动/未播放过任何专辑时为 null）。 */
+    fun getLastPlayedBook(): Flow<Book?> =
+        bookDao.getMostRecentlyPlayedBook().map { it?.toBook() }
+
     suspend fun getBookById(id: Long): Book? = bookDao.getBookById(id)?.toBook()
 
     suspend fun getBookByUrl(url: String): Book? = bookDao.getBookByUrl(url)?.toBook()

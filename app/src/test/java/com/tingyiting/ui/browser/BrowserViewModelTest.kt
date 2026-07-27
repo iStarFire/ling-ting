@@ -203,6 +203,7 @@ class BrowserViewModelTest {
     private companion object {
         val stubBookDao = object : BookDao {
             override fun getAllBooks(): Flow<List<BookEntity>> = flowOf(emptyList())
+            override fun getMostRecentlyPlayedBook(): Flow<BookEntity?> = flowOf(null)
             override suspend fun getBookById(id: Long): BookEntity? = null
             override suspend fun getBookByUrl(url: String): BookEntity? = null
             override suspend fun getBookByRootPath(rootPath: String): BookEntity? = null

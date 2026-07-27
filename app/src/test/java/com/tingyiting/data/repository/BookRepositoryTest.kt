@@ -10,6 +10,7 @@ import com.tingyiting.data.store.WebDavConfig
 import com.tingyiting.data.store.WebDavConfigStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -87,6 +88,27 @@ class BookRepositoryTest {
         assertEquals("30,60", bookDao.updatedSkip?.introHistory)
     }
 
+    @Test
+    fun getLastPlayedBook_emitsMostRecentPlayedBook() = runTest {
+        val bookDao = FakeBookDao(7L)
+        val repo = BookRepository(bookDao, FakeTrackDao())
+
+        // 仅设置 lastPlayedAt 应能正确转换成 Book
+        bookDao.updateProgress(7L, position = 5_000, duration = 60_000, timestamp = System.currentTimeMillis())
+        val first = repo.getLastPlayedBook().firstOrNull()
+        assertEquals("旧名", first?.title) // 来自 FakeBookDao 的初始 storedEntity
+        assertEquals(5_000L, first?.position)
+    }
+
+    @Test
+    fun getLastPlayedBook_returnsNullWhenNeverPlayed() = runTest {
+        val bookDao = FakeBookDao(7L)
+        val repo = BookRepository(bookDao, FakeTrackDao())
+        // 默认 storedEntity.lastPlayedAt = 0，不应返回这本书
+        val result = repo.getLastPlayedBook().firstOrNull()
+        assertEquals(null, result)
+    }
+
     // ---- 测试替身 ----
 
     private object NoOpConfigStore : WebDavConfigStore {
@@ -131,6 +153,8 @@ class BookRepositoryTest {
         )
 
         override fun getAllBooks(): Flow<List<BookEntity>> = flowOf(emptyList())
+        override fun getMostRecentlyPlayedBook(): Flow<BookEntity?> =
+            kotlinx.coroutines.flow.flowOf(storedEntity.takeIf { it.lastPlayedAt > 0 })
         override suspend fun getBookById(id: Long): BookEntity? =
             if (id == existingId) storedEntity else null
         override suspend fun getBookByUrl(url: String): BookEntity? = null
