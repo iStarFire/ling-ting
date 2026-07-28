@@ -1,6 +1,7 @@
 package com.tingyiting.di
 
 import android.content.Context
+import androidx.media3.common.C
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -37,6 +38,7 @@ object AppModule {
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(3))
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
     }
 

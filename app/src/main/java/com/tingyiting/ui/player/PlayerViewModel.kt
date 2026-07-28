@@ -19,12 +19,14 @@ import com.tingyiting.playback.PlaybackError
 import com.tingyiting.playback.PlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class PlayerUiState(
@@ -88,9 +90,12 @@ class PlayerViewModel @Inject constructor(
     private var episodesRemaining: Int = 0
 
     fun initialize(bookId: Long) {
-        if (bookId == 0L || (initializeJob?.isActive == true && _uiState.value.bookId == bookId)) return
+        android.util.Log.d("PlayerPerf", "initialize() start bookId=$bookId t=${System.currentTimeMillis()}")
+        if (bookId == 0L || (initializeJob?.isActive == true && _uiState.value.bookId == bookId)) {
+            android.util.Log.d("PlayerPerf", "initialize() skipped (already loading same book) t=${System.currentTimeMillis()}")
+            return
+        }
         initializeJob?.cancel()
-        // 切换书籍前先停掉旧定时（避免集数计数与新书混在一起）
         cancelSleepTimerInternal()
         val lastChoice = sleepTimerPrefs?.resolveForBook(bookId)
         _uiState.update {
@@ -104,12 +109,15 @@ class PlayerViewModel @Inject constructor(
 
         initializeJob = viewModelScope.launch {
             try {
+                android.util.Log.d("PlayerPerf", "initialize() coroutine: before getBookById t=${System.currentTimeMillis()}")
                 val book = bookRepository.getBookById(bookId)
+                android.util.Log.d("PlayerPerf", "initialize() coroutine: after getBookById book=${book?.title} t=${System.currentTimeMillis()}")
                 if (book == null) {
                     _uiState.update { it.copy(error = "书籍未找到", isInitialLoading = false) }
                     return@launch
                 }
                 val tracks = bookRepository.getTracks(bookId)
+                android.util.Log.d("PlayerPerf", "initialize() coroutine: after getTracks count=${tracks.size} t=${System.currentTimeMillis()}")
                 activeBook = book
                 activeTracks = tracks
                 val isDirectoryBook = book.rootPath.isNotEmpty()
@@ -179,11 +187,31 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun buildPlaylist(book: Book, tracks: List<Track>) {
+    private suspend fun buildPlaylist(book: Book, tracks: List<Track>) {
         val startIndex = book.currentTrackIndex.coerceIn(0, tracks.lastIndex)
         val startTrack = tracks[startIndex]
         val resume = resumePosition(startTrack)
         val startPosition = effectiveStartPosition(resume, book)
+
+        // 625 集 PlayableItem 映射在主线程耗时 ~500ms，移到后台线程；
+        // 回到主线程后调原有的 setPlaylist（利用 ExoAudioPlayer.toMediaItem 的 FileProvider 等逻辑）
+        android.util.Log.d("PlayerPerf", "buildPlaylist: before background map t=${System.currentTimeMillis()}")
+        val items: List<PlayableItem> = if (appContext != null) {
+            withContext(Dispatchers.Default) {
+                tracks.map { it.toPlayableItem(book) }
+            }
+        } else {
+            tracks.map { it.toPlayableItem(book) }
+        }
+        android.util.Log.d("PlayerPerf", "buildPlaylist: after background map t=${System.currentTimeMillis()}")
+        player.setPlaylist(items, startIndex, startPosition)
+        android.util.Log.d("PlayerPerf", "buildPlaylist: after setPlaylist t=${System.currentTimeMillis()}")
+        player.prepare()
+        android.util.Log.d("PlayerPerf", "buildPlaylist: after prepare t=${System.currentTimeMillis()}")
+        playAudio()
+        android.util.Log.d("PlayerPerf", "buildPlaylist: after playAudio t=${System.currentTimeMillis()}")
+        playbackState.setCurrentBook(book.id, tracks.size)
+
         _uiState.update {
             it.copy(
                 bookId = book.id,
@@ -208,21 +236,23 @@ class PlayerViewModel @Inject constructor(
                 outroSkipHistory = book.outroSkipHistory
             )
         }
-        val items = tracks.map {
-            PlayableItem(
-                url = it.webdavUrl,
-                title = it.title,
-                artwork = book.coverUrl.takeIf { url -> url.isNotBlank() }
-            )
-        }
-        player.setPlaylist(items, startIndex, startPosition)
-        player.prepare()
-        playAudio()
-        playbackState.setCurrentBook(book.id, tracks.size)
     }
 
     private fun playSingleFile(book: Book) {
+        android.util.Log.d("PlayerPerf", "playSingleFile start t=${System.currentTimeMillis()}")
         val startPosition = effectiveStartPosition(book.position.coerceAtLeast(0), book)
+        player.setItem(
+            PlayableItem(
+                url = book.webdavUrl,
+                title = book.title,
+                artwork = book.coverUrl.takeIf { it.isNotBlank() }
+            ),
+            startPosition
+        )
+        player.prepare()
+        playAudio()
+        playbackState.setCurrentBook(book.id, 1)
+
         _uiState.update {
             it.copy(
                 bookId = book.id,
@@ -246,17 +276,6 @@ class PlayerViewModel @Inject constructor(
                 outroSkipHistory = book.outroSkipHistory
             )
         }
-        player.setItem(
-            PlayableItem(
-                url = book.webdavUrl,
-                title = book.title,
-                artwork = book.coverUrl.takeIf { it.isNotBlank() }
-            ),
-            startPosition
-        )
-        player.prepare()
-        playAudio()
-        playbackState.setCurrentBook(book.id, 1)
     }
 
     private fun attachListener() {
@@ -372,6 +391,7 @@ class PlayerViewModel @Inject constructor(
      * 因此每次真正 play 前都重启一次服务，让 MediaSession 重新绑定到同一个 ExoPlayer 单例。
      */
     private fun playAudio() {
+        android.util.Log.d("PlayerPerf", "playAudio() start t=${System.currentTimeMillis()}")
         // 仅在有可用 Context 时（非测试环境）重启后台播放服务。
         // 使用普通 startService 而非 startForegroundService，避免系统 5 秒超时 ANR：
         // Media3 会在播放实际开始时自行调用 startForeground 拉起通知并保持前台保护。
@@ -401,7 +421,7 @@ class PlayerViewModel @Inject constructor(
                 if (player.itemCount > 1) player.seekTo(player.currentItemIndex, 0) else player.seekTo(0)
                 playAudio()
             }
-            else -> if (player.playWhenReady) player.pause() else playAudio()
+            else -> if (player.isPlaying) player.pause() else playAudio()
         }
     }
 
@@ -796,3 +816,9 @@ private fun effectiveStartPosition(resumeMs: Long, book: Book?): Long {
 
 private fun Book.introMs(): Long =
     if (introSkipEnabled && introSkipSeconds > 0) introSkipSeconds * 1000L else 0L
+
+private fun Track.toPlayableItem(book: Book): PlayableItem = PlayableItem(
+    url = webdavUrl,
+    title = title,
+    artwork = book.coverUrl.takeIf { it.isNotBlank() }
+)

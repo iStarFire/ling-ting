@@ -37,7 +37,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun BookshelfScreen(
     onNavigateToBrowser: () -> Unit,
-    onNavigateToPlayer: (Long) -> Unit,
+    onNavigateToPlayer: (Long, String?) -> Unit,
     onNavigateToAccounts: () -> Unit,
     onNavigateToWebDav: () -> Unit,
     onNavigateToReimport: (bookId: Long, path: String) -> Unit = { _, _ -> },
@@ -62,7 +62,7 @@ fun BookshelfScreen(
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             viewModel.importLocalFolder(uri)
-                .onSuccess { bookId -> onNavigateToPlayer(bookId) }
+                .onSuccess { bookId -> onNavigateToPlayer(bookId, null) }
                 .onFailure { e -> snackbarHostState.showSnackbar(e.message ?: "导入失败") }
         }
     }
@@ -159,7 +159,7 @@ fun BookshelfScreen(
                             BookCard(
                                 item = item,
                                 playing = playing,
-                                onClick = { onNavigateToPlayer(item.book.id) },
+                                onClick = { onNavigateToPlayer(item.book.id, item.book.coverUrl) },
                                 onLongClick = {
                                     actionBook = item
                                     showActionSheet = true

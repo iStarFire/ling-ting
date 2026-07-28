@@ -25,7 +25,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun BrowserScreen(
     onNavigateToBookshelf: () -> Unit,
-    onNavigateToPlayer: (Long) -> Unit,
+    onNavigateToPlayer: (Long, String?) -> Unit,
     reimportBookId: Long? = null,
     reimportPath: String? = null,
     viewModel: BrowserViewModel = hiltViewModel()
@@ -219,7 +219,7 @@ fun BrowserScreen(
                                         if (!selecting) {
                                             scope.launch {
                                                 val bookId = viewModel.addBookToShelf(file)
-                                                onNavigateToPlayer(bookId)
+                                                onNavigateToPlayer(bookId, null)
                                             }
                                         }
                                     }

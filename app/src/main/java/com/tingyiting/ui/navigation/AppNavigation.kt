@@ -1,14 +1,17 @@
 package com.tingyiting.ui.navigation
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
@@ -28,12 +31,11 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +58,7 @@ import com.tingyiting.ui.browser.BrowserScreen
 import com.tingyiting.ui.components.CoverArtwork
 import com.tingyiting.ui.player.PlayerScreen
 import com.tingyiting.ui.server.ServerConfigScreen
+import kotlinx.coroutines.delay
 
 /**
  * 播放页状态持有者：记录当前打开的播放页 bookId，null 表示播放页未打开。
@@ -69,16 +72,28 @@ import com.tingyiting.ui.server.ServerConfigScreen
 class PlayerOverlayState {
     var bookId by mutableStateOf<Long?>(null)
         private set
+    /** 书架页已知的封面 URL，避免 ViewModel 初始 coverUrl="" 导致的文字占位闪烁。 */
+    var preloadedCoverUrl by mutableStateOf<String?>(null)
+        private set
     var visible by mutableStateOf(false)
         private set
 
-    fun open(bookId: Long) {
+    fun open(bookId: Long, coverUrl: String? = null) {
+        android.util.Log.d("PlayerPerf", "open() bookId=$bookId t=${System.currentTimeMillis()}")
         this.bookId = bookId
-        this.visible = true
+        this.preloadedCoverUrl = coverUrl
+        this.visible = false
     }
 
     fun close() {
+        android.util.Log.d("PlayerPerf", "close() t=${System.currentTimeMillis()}")
         this.visible = false
+    }
+
+    /** 内部使用，触发进入动画。 */
+    internal fun show() {
+        android.util.Log.d("PlayerPerf", "show() → visible=true t=${System.currentTimeMillis()}")
+        this.visible = true
     }
 
     /** 由 AnimatedVisibility 退出动画完成后调用，清理 bookId。 */
@@ -120,8 +135,8 @@ fun AppNavigation(
     }
     val miniShortcutCoverUrl = coverUrl ?: lastPlayedBook?.coverUrl
 
-    // 路由到播放页：不经过 NavHost，直接打开覆盖层
-    val onNavigateToPlayer: (Long) -> Unit = { bookId -> playerOverlay.open(bookId) }
+    // 路由到播放页：不经过 NavHost，直接打开覆盖层（附带已知封面 URL 避免首帧闪烁）
+    val onNavigateToPlayer: (Long, String?) -> Unit = { bookId, coverUrl -> playerOverlay.open(bookId, coverUrl) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -140,9 +155,8 @@ fun AppNavigation(
                             onClick = {
                                 val info = miniShortcutInfo
                                 if (info != null) {
-                                    // 有当前播放：先恢复播放再跳转；上次播放：跳转后自动载入
                                     if (playbackInfo != null) playbackViewModel.resumeIfPaused()
-                                    playerOverlay.open(info.bookId)
+                                    playerOverlay.open(info.bookId, miniShortcutCoverUrl)
                                 }
                             }
                         )
@@ -204,10 +218,9 @@ fun AppNavigation(
                     val reimportPath = it.arguments?.getString("reimportPath")
                     BrowserScreen(
                         onNavigateToBookshelf = { navController.popBackStack() },
-                        onNavigateToPlayer = { bookId ->
-                            // 浏览器导入完成后跳到播放页：先回到书架，再打开覆盖层
+                        onNavigateToPlayer = { bookId, coverUrl ->
                             navController.popBackStack(Screen.Bookshelf.route, false)
-                            playerOverlay.open(bookId)
+                            playerOverlay.open(bookId, coverUrl)
                         },
                         reimportBookId = reimportBookId,
                         reimportPath = reimportPath
@@ -216,32 +229,36 @@ fun AppNavigation(
             }
         }
 
-        // 播放页覆盖层：从底部以抽屉动画滑出，覆盖在 NavHost/Scaffold 之上。
-        // Scaffold 完全不受影响 → 没有 bottomBar 显隐 → 没有闪烁。
-        // bookId 在退出动画播完后才清空，保证 AnimatedVisibility 有内容可动画。
+        // 播放页覆盖层：延迟触发动画让 ViewModel 先加载数据，避免首帧卡顿
         val openBookId = playerOverlay.bookId
         if (openBookId != null) {
             BackHandler(enabled = true) { playerOverlay.close() }
-            androidx.compose.animation.AnimatedVisibility(
+            AnimatedVisibility(
                 visible = playerOverlay.visible,
                 enter = slideInVertically(
                     initialOffsetY = { it },
-                    animationSpec = tween(durationMillis = 600, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    animationSpec = tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
                 ),
                 exit = slideOutVertically(
                     targetOffsetY = { it },
-                    animationSpec = tween(durationMillis = 500, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    animationSpec = tween(durationMillis = 250, easing = androidx.compose.animation.core.FastOutSlowInEasing)
                 )
             ) {
                 PlayerScreen(
                     bookId = openBookId,
+                    preloadedCoverUrl = playerOverlay.preloadedCoverUrl,
                     onNavigateBack = { playerOverlay.close() }
                 )
             }
+
+            // 立即触发进入动画：加载骨架很轻量，动画丝滑；
+            // 重活（track 映射、setPlaylist）完成后 isInitialLoading=false 才展示完整 UI
+            LaunchedEffect(Unit) { playerOverlay.show() }
+
             // 退出动画播完后清理 bookId
             LaunchedEffect(playerOverlay.visible) {
                 if (!playerOverlay.visible) {
-                    delay(500)
+                    delay(250)
                     playerOverlay.onExited()
                 }
             }
@@ -301,13 +318,10 @@ private fun PlayerShortcutIcon(
         label = "rotation"
     )
 
-    // 尺寸与播放页主播放按钮 (FilledIconButton.size(80.dp)) 一致，
-    // 避免在书架页与播放页之间切换时按钮视觉上跳动。
     Box(
         modifier = Modifier.size(SHORTCUT_ICON_SIZE),
         contentAlignment = Alignment.Center
     ) {
-        // 外圈进度环
         CircularProgressIndicator(
             progress = { progress.coerceIn(0f, 1f) },
             modifier = Modifier.fillMaxSize(),
@@ -317,7 +331,6 @@ private fun PlayerShortcutIcon(
             trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
             strokeCap = StrokeCap.Round
         )
-        // 封面（圆形，播放中旋转）
         Box(
             modifier = Modifier
                 .padding(6.dp)

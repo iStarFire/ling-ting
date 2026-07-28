@@ -112,9 +112,11 @@ private const val SEEK_INTERVAL_MS = 15_000L
 fun PlayerScreen(
     bookId: Long,
     onNavigateBack: () -> Unit,
+    preloadedCoverUrl: String? = null,
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    android.util.Log.d("PlayerPerf", "PlayerScreen compose bookId=$bookId isInitialLoading=${state.isInitialLoading} t=${System.currentTimeMillis()}")
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showTrackSheet by remember { mutableStateOf(false) }
     var showCoverSheet by remember { mutableStateOf(false) }
@@ -142,6 +144,26 @@ fun PlayerScreen(
     BoxWithConstraints {
         val isLandscape = maxWidth > maxHeight
         Scaffold { padding ->
+            // 加载中只渲染轻量骨架（返回箭头 + 加载指示器），
+            // 避免首次冷组合 50+ composable 与滑入动画叠加导致卡顿。
+            // 数据就绪后再组合完整 UI（单次重组，不影响动画流畅度）。
+            if (state.isInitialLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.padding(4.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+            } else {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -196,9 +218,11 @@ fun PlayerScreen(
                 )
 
                 if (!isLandscape) {
+                    // 优先用书架页传入的封面 URL（首帧即就绪），避开 ViewModel 初始 coverUrl="" 的闪烁
+                    val effectiveCoverUrl = preloadedCoverUrl.takeIf { !it.isNullOrBlank() } ?: state.coverUrl
                     Artwork(
                         title = state.title,
-                        coverUrl = state.coverUrl,
+                        coverUrl = effectiveCoverUrl,
                         showLoading = state.isInitialLoading || state.isBuffering,
                         onEdit = { showCoverSheet = true },
                         modifier = Modifier.size(260.dp)
@@ -293,6 +317,7 @@ fun PlayerScreen(
                     onSeekForward = { viewModel.seekBy(SEEK_INTERVAL_MS) },
                     onNext = viewModel::nextTrack
                 )
+            }
             }
         }
     }
@@ -1134,7 +1159,7 @@ private fun quickSkipOptions(history: List<Int>): List<Int> =
     (FIXED_SKIP_SECONDS + history).distinct().sorted()
 
 private val FIXED_SKIP_SECONDS: List<Int> = listOf(15, 30, 60, 120, 180)
-private const val MAX_SKIP_SECONDS = 180
+private const val MAX_SKIP_SECONDS = 300
 
 private fun formatDuration(ms: Long): String {
     val totalSeconds = ms.coerceAtLeast(0) / 1000
