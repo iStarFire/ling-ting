@@ -658,7 +658,7 @@ class PlayerViewModelTest {
         vm.applySkipSettings(introEnabled = true, introSeconds = 999, outroEnabled = true, outroSeconds = -1)
         runCurrent()
 
-        assertEquals(180, vm.uiState.value.introSkipSeconds)
+        assertEquals(300, vm.uiState.value.introSkipSeconds)
         assertEquals(0, vm.uiState.value.outroSkipSeconds)
     }
 

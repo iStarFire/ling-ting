@@ -775,7 +775,7 @@ class PlayerViewModel @Inject constructor(
         const val PROGRESS_SAVE_INTERVAL_MS = 15_000L
         const val POSITION_UPDATE_INTERVAL_MS = 500L
         /** 片头/片尾跳过的最大秒数（与 UI 滑杆上限一致）。 */
-        const val MAX_SKIP_SECONDS = 180
+        const val MAX_SKIP_SECONDS = 300
     }
 }
 

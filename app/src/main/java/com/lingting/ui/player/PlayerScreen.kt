@@ -1008,10 +1008,14 @@ private fun SkipIntroOutroSheet(
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var introOn by remember(introSeconds, introEnabled) { mutableStateOf(introEnabled) }
-    var introSec by remember(introSeconds) { mutableStateOf(introSeconds.coerceIn(0, MAX_SKIP_SECONDS)) }
-    var outroOn by remember(outroSeconds, outroEnabled) { mutableStateOf(outroEnabled) }
-    var outroSec by remember(outroSeconds) { mutableStateOf(outroSeconds.coerceIn(0, MAX_SKIP_SECONDS)) }
+    // 注意：本地状态不能用外部 state 作为 remember 的 key。
+    // 否则拖动滑杆时 previewSkipSettings 会更新外部 state 触发重组，
+    // 导致本地值被重新初始化为外部值，造成滑块回滚 / 设置不生效。
+    // 这里只依赖首次打开时的初始值（sheet 每次打开都会重建，取到最新持久化值）。
+    var introOn by remember { mutableStateOf(introEnabled) }
+    var introSec by remember { mutableStateOf(introSeconds.coerceIn(0, MAX_SKIP_SECONDS)) }
+    var outroOn by remember { mutableStateOf(outroEnabled) }
+    var outroSec by remember { mutableStateOf(outroSeconds.coerceIn(0, MAX_SKIP_SECONDS)) }
     val introOptions = remember(introHistory) { quickSkipOptions(introHistory) }
     val outroOptions = remember(outroHistory) { quickSkipOptions(outroHistory) }
 
