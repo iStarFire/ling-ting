@@ -1,10 +1,10 @@
-# TingYiTing Project Context
+# LingTing Project Context
 
 Last reviewed: 2026-07-26
 
 ## Project Overview
 
-TingYiTing is a minimal Android audiobook app. It connects to an Alist WebDAV server, browses cloud-drive audio resources, streams them online with Media3/ExoPlayer, and stores bookshelf metadata plus playback progress locally.
+LingTing is a minimal Android audiobook app. It connects to an Alist WebDAV server, browses cloud-drive audio resources, streams them online with Media3/ExoPlayer, and stores bookshelf metadata plus playback progress locally.
 
 The app intentionally does not download audio files to local storage. Books store WebDAV URLs or imported directory roots, and playback uses HTTP/WebDAV streaming with Range support.
 
@@ -23,7 +23,7 @@ The app intentionally does not download audio files to local storage. Books stor
 
 Main flow:
 
-1. TingYiTingApp starts and asks WebDavRepository to restore the saved WebDAV config.
+1. LingTingApp starts and asks WebDavRepository to restore the saved WebDAV config.
 2. MainActivity starts PlaybackService and hosts Compose navigation.
 3. AppNavigation starts at the bookshelf and exposes two top-level tabs: bookshelf and accounts.
 4. The bookshelf shows locally stored books and routes to WebDAV browsing or playback.
@@ -33,17 +33,17 @@ Main flow:
 
 Important package areas:
 
-- app/src/main/java/com/tingyiting/ui/navigation/: Compose navigation and route definitions.
-- app/src/main/java/com/tingyiting/ui/bookshelf/: bookshelf screen and state.
-- app/src/main/java/com/tingyiting/ui/accounts/: external account management UI.
-- app/src/main/java/com/tingyiting/ui/server/: WebDAV config/edit screen.
-- app/src/main/java/com/tingyiting/ui/browser/: WebDAV directory browsing and import.
-- app/src/main/java/com/tingyiting/ui/player/: playback UI and player state.
-- app/src/main/java/com/tingyiting/data/repository/: business/data coordination.
-- app/src/main/java/com/tingyiting/data/local/: Room database, DAOs, and entities.
-- app/src/main/java/com/tingyiting/network/: WebDAV client, PROPFIND parser, and auth data source.
-- app/src/main/java/com/tingyiting/service/: background playback service.
-- app/src/main/java/com/tingyiting/di/: Hilt modules.
+- app/src/main/java/com/lingting/ui/navigation/: Compose navigation and route definitions.
+- app/src/main/java/com/lingting/ui/bookshelf/: bookshelf screen and state.
+- app/src/main/java/com/lingting/ui/accounts/: external account management UI.
+- app/src/main/java/com/lingting/ui/server/: WebDAV config/edit screen.
+- app/src/main/java/com/lingting/ui/browser/: WebDAV directory browsing and import.
+- app/src/main/java/com/lingting/ui/player/: playback UI and player state.
+- app/src/main/java/com/lingting/data/repository/: business/data coordination.
+- app/src/main/java/com/lingting/data/local/: Room database, DAOs, and entities.
+- app/src/main/java/com/lingting/network/: WebDAV client, PROPFIND parser, and auth data source.
+- app/src/main/java/com/lingting/service/: background playback service.
+- app/src/main/java/com/lingting/di/: Hilt modules.
 
 ## Data Model Notes
 

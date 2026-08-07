@@ -1,4 +1,4 @@
-# 听一听 (TingYiTing)
+# 零听 (LingTing)
 
 极简 Android 听书 App，通过 Alist WebDAV 连接网盘，在线播放听书资源。
 

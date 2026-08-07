@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.tingyiting"
+    namespace = "com.lingting"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tingyiting"
+        applicationId = "com.lingting"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

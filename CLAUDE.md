@@ -1,4 +1,4 @@
-# 听一听 (TingYiTing) — CLAUDE.md
+# 零听 (LingTing) — CLAUDE.md
 
 ## 项目概述
 极简 Android 听书 App，通过 Alist WebDAV 连接网盘（如夸克网盘），**在线播放**听书资源，不下载到本地。
@@ -17,7 +17,7 @@
 ## 核心架构
 
 ```
-com.tingyiting/
+com.lingting/
 ├── data/
 │   ├── local/         # Room 数据库 (DAO, Entity)
 │   ├── repository/    # 仓库层 (BookRepository, WebDavRepository)
