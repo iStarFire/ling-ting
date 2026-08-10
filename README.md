@@ -4,7 +4,7 @@
 
 # 零听 · LingTing
 
-**极简 Android 听书 App —— 通过 WebDAV 连接网盘，在线播放听书资源**
+**极简 Android 听书 App —— 通过 WebDAV（兼容 Alist）连接网盘，在线流式播放听书资源，支持书架管理、进度记忆、跳过头尾与睡眠定时。**
 
 [![Platform](https://img.shields.io/badge/platform-Android-3DDC84)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/minSdk-26-blue)]()
