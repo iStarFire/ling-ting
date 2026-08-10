@@ -15,5 +15,10 @@
 *.jks
 *.keystore
 *.hprof
+# 签名密钥与口令，禁止提交
+*.jks
+*.keystore
+*.p12
+.keystore-pass.txt
 # gradle wrapper jar is tracked, but local.properties is not
 

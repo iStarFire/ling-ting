@@ -22,6 +22,28 @@ android {
         }
     }
 
+
+
+    signingConfigs {
+        // 正式签名：从环境变量读取，用于 CI（GitHub Actions Secrets）自动构建 Release。
+        // 本地未配置环境变量时回退到 debug 签名，保证 `assembleRelease` 本地可跑。
+        create("release") {
+            val keystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+            if (keystorePath.isNullOrBlank()) {
+                // 本地/未注入 secrets：使用默认 debug keystore 作为回退，避免本地构建失败
+                storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            } else {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -29,6 +51,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isMinifyEnabled = false
