@@ -3,6 +3,8 @@
 .codebuddy/plans
 /local.properties
 /.idea
+# 本地环境变量（含本机 JDK 路径，禁止提交；参考模板见 .env.example）
+/.env
 .DS_Store
 /build
 /captures

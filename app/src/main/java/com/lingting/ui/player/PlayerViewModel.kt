@@ -2,6 +2,7 @@ package com.lingting.ui.player
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -52,6 +53,8 @@ data class PlayerUiState(
     val tracks: List<Track> = emptyList(),
     val coverUrl: String = "",
     val isCoverUpdating: Boolean = false,
+    val isCoverSearching: Boolean = false,
+    val doubanCovers: List<String> = emptyList(),
     val coverError: String? = null,
     /** 是否启用片头跳过。 */
     val introSkipEnabled: Boolean = false,
@@ -570,6 +573,103 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(sleepTimerEpisodesRemaining = count) }
     }
 
+    /**
+     * 搜索豆瓣封面候选（只搜索，不直接保存）。结果写入 [PlayerUiState.doubanCovers]，
+     * 由 UI 先让用户选中一张，再走 [downloadDoubanCoverToTemp] + [importDoubanCover]。
+     */
+    fun searchDoubanCovers(query: String = "") {
+        val state = _uiState.value
+        if (state.bookId == 0L || state.isCoverSearching || state.isCoverUpdating) return
+        val repository = coverRepository ?: run {
+            _uiState.update { it.copy(coverError = "封面服务不可用") }
+            return
+        }
+        val effectiveQuery = query.trim().ifBlank { state.title }
+        _uiState.update { it.copy(isCoverSearching = true, coverError = null, doubanCovers = emptyList()) }
+        viewModelScope.launch {
+            repository.searchDoubanCovers(effectiveQuery)
+                .onSuccess { covers ->
+                    _uiState.update {
+                        it.copy(isCoverSearching = false, doubanCovers = covers, coverError = null)
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isCoverSearching = false,
+                            doubanCovers = emptyList(),
+                            coverError = error.message ?: "封面搜刮失败"
+                        )
+                    }
+                }
+        }
+    }
+
+    /** 加载候选封面缩略图（供候选列表预览），带内存缓存，IO 线程执行。 */
+    suspend fun loadDoubanThumbnail(imageUrl: String): Bitmap? =
+        coverRepository?.loadThumbnail(imageUrl)
+
+    /** 下载某张候选封面到临时文件，供裁剪界面预览/编辑（不落库）。 */
+    fun downloadDoubanCoverToTemp(imageUrl: String, onResult: (Uri?) -> Unit) {
+        val repository = coverRepository ?: run {
+            _uiState.update { it.copy(coverError = "封面服务不可用") }
+            onResult(null)
+            return
+        }
+        _uiState.update { it.copy(isCoverUpdating = true, coverError = null) }
+        viewModelScope.launch {
+            repository.downloadToTemp(imageUrl)
+                .onSuccess { uri ->
+                    _uiState.update { it.copy(isCoverUpdating = false) }
+                    onResult(uri)
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isCoverUpdating = false,
+                            coverError = error.message ?: "封面下载失败"
+                        )
+                    }
+                    onResult(null)
+                }
+        }
+    }
+
+    /** 保存裁剪后的豆瓣封面到书籍。 */
+    fun importDoubanCover(imageUrl: String, crop: CoverCrop) {
+        val state = _uiState.value
+        if (state.bookId == 0L || state.isCoverUpdating) return
+        val repository = coverRepository ?: run {
+            _uiState.update { it.copy(coverError = "封面服务不可用") }
+            return
+        }
+        _uiState.update { it.copy(isCoverUpdating = true, coverError = null) }
+        viewModelScope.launch {
+            repository.importDoubanCover(state.bookId, imageUrl, crop)
+                .onSuccess { coverUrl ->
+                    activeBook = activeBook?.copy(coverUrl = coverUrl)
+                    _uiState.update {
+                        it.copy(
+                            coverUrl = coverUrl,
+                            isCoverUpdating = false,
+                            isCoverSearching = false,
+                            doubanCovers = emptyList(),
+                            coverError = null
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isCoverUpdating = false,
+                            coverError = error.message ?: "封面导入失败"
+                        )
+                    }
+                }
+        }
+    }
+
+    /** 兼容旧调用：自动搜索并直接用第一张候选（不裁剪）。 */
     fun scrapeCoverFromDouban(query: String = "") {
         val state = _uiState.value
         if (state.bookId == 0L || state.isCoverUpdating) return

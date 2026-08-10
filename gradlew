@@ -85,6 +85,13 @@ APP_HOME=$( cd "${APP_HOME:-./}" && pwd -P ) || exit
 APP_NAME="Gradle"
 APP_BASE_NAME=${0##*/}
 
+# 加载本地环境变量文件（可选）：若仓库根目录存在 .env，则 source 它以注入 JAVA_HOME 等。
+# 仅本地构建使用；CI（GitHub Actions）没有该文件，自动跳过，改用 actions/setup-java 提供的 JDK。
+if [ -f "$APP_HOME/.env" ]; then
+    # shellcheck disable=SC1090
+    . "$APP_HOME/.env"
+fi
+
 # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 

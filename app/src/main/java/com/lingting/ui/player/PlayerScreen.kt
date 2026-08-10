@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,6 +76,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -122,11 +124,16 @@ fun PlayerScreen(
     var showCoverSheet by remember { mutableStateOf(false) }
     var showSkipSheet by remember { mutableStateOf(false) }
     var cropImageUri by remember { mutableStateOf<Uri?>(null) }
+    // 当前正在裁剪的图来源：null=本地相册图，非空=豆瓣候选图 URL（用于保存走 importDoubanCover）
+    var cropDoubanUrl by remember { mutableStateOf<String?>(null) }
     var draggedFraction by remember { mutableStateOf<Float?>(null) }
     val trackSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val trackListState = rememberLazyListState()
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        cropImageUri = uri
+        if (uri != null) {
+            cropDoubanUrl = null
+            cropImageUri = uri
+        }
     }
 
     LaunchedEffect(bookId) {
@@ -349,40 +356,81 @@ fun PlayerScreen(
                 label = { Text("搜刮关键词") },
                 placeholder = { Text(state.title) },
                 singleLine = true,
-                enabled = !state.isCoverUpdating,
+                enabled = !state.isCoverUpdating && !state.isCoverSearching,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 4.dp),
                 trailingIcon = {
                     IconButton(
-                        onClick = { viewModel.scrapeCoverFromDouban(coverQuery) },
-                        enabled = !state.isCoverUpdating && coverQuery.isNotBlank()
+                        onClick = { viewModel.searchDoubanCovers(coverQuery) },
+                        enabled = !state.isCoverUpdating && !state.isCoverSearching && coverQuery.isNotBlank()
                     ) {
                         Icon(Icons.Default.Search, contentDescription = "搜刮")
                     }
                 }
             )
             ListItem(
-                headlineContent = { Text("从豆瓣自动搜刮") },
+                headlineContent = { Text("从豆瓣搜刮") },
                 supportingContent = {
                     Text(
-                        text = if (state.isCoverUpdating) "正在搜索并保存封面..." else "使用上方关键词搜索封面并保存到本地"
+                        text = when {
+                            state.isCoverSearching -> "正在搜索候选封面..."
+                            state.doubanCovers.isNotEmpty() -> "找到 ${state.doubanCovers.size} 张候选，点选后预览裁剪"
+                            else -> "使用上方关键词搜索封面候选"
+                        }
                     )
                 },
                 leadingContent = {
                     Icon(Icons.Default.Search, contentDescription = null)
                 },
-                modifier = Modifier.clickable(enabled = !state.isCoverUpdating) {
-                    viewModel.scrapeCoverFromDouban(coverQuery)
+                modifier = Modifier.clickable(enabled = !state.isCoverUpdating && !state.isCoverSearching) {
+                    viewModel.searchDoubanCovers(coverQuery)
                 }
             )
+            // 候选封面缩略图列表：点击某张 → 下载到临时文件 → 进入裁剪
+            if (state.isCoverSearching) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else if (state.doubanCovers.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(state.doubanCovers, key = { index, _ -> index }) { index, url ->
+                        DoubanCoverThumb(
+                            url = url,
+                            index = index,
+                            loadingThumb = viewModel::loadDoubanThumbnail,
+                            onClick = {
+                                if (!state.isCoverUpdating) {
+                                    viewModel.downloadDoubanCoverToTemp(url) { uri ->
+                                        if (uri != null) {
+                                            cropDoubanUrl = url
+                                            cropImageUri = uri
+                                            showCoverSheet = false
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
             ListItem(
                 headlineContent = { Text("选择本地图片") },
                 supportingContent = { Text("从相册或文件中选择封面") },
                 leadingContent = {
                     Icon(Icons.Default.Image, contentDescription = null)
                 },
-                modifier = Modifier.clickable(enabled = !state.isCoverUpdating) {
+                modifier = Modifier.clickable(enabled = !state.isCoverUpdating && !state.isCoverSearching) {
                     coverPicker.launch("image/*")
                     showCoverSheet = false
                 }
@@ -404,10 +452,18 @@ fun PlayerScreen(
             uri = uri,
             isSaving = state.isCoverUpdating,
             onConfirm = { crop ->
-                viewModel.importLocalCover(uri, crop)
+                if (cropDoubanUrl != null) {
+                    viewModel.importDoubanCover(cropDoubanUrl!!, crop)
+                } else {
+                    viewModel.importLocalCover(uri, crop)
+                }
                 cropImageUri = null
+                cropDoubanUrl = null
             },
-            onDismiss = { cropImageUri = null }
+            onDismiss = {
+                cropImageUri = null
+                cropDoubanUrl = null
+            }
         )
     }
 
@@ -561,6 +617,51 @@ private fun Artwork(
     }
 }
 
+/**
+ * 豆瓣候选封面缩略图项：异步加载 URL 图供预览，点击回调。
+ */
+@Composable
+private fun DoubanCoverThumb(
+    url: String,
+    index: Int,
+    loadingThumb: suspend (String) -> Bitmap?,
+    onClick: () -> Unit
+) {
+    val bitmap by produceState<Bitmap?>(initialValue = null, url) {
+        value = loadingThumb(url)
+    }
+    Box(
+        modifier = Modifier
+            .size(88.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(enabled = true, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "候选封面 ${index + 1}",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+        }
+        // 序号角标
+        Text(
+            text = "${index + 1}",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 4.dp)
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CoverCropSheet(
@@ -572,8 +673,22 @@ private fun CoverCropSheet(
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(initialValue = null, uri) {
         value = withContext(Dispatchers.IO) {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                BitmapFactory.decodeStream(input)
+            // 两段式解码：先只读尺寸，再按目标尺寸做 inSampleSize 降采样，
+            // 避免 4K 图片在 Compose 里全量解码导致的内存峰值与首屏卡顿。
+            val resolver = context.contentResolver
+            val (srcW, srcH) = resolver.openInputStream(uri)?.use { input ->
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(input, null, opts)
+                opts.outWidth to opts.outHeight
+            } ?: (0 to 0)
+            val targetMax = 1024
+            val sample = computeInSampleSize(srcW, srcH, targetMax)
+            resolver.openInputStream(uri)?.use { input ->
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                BitmapFactory.decodeStream(input, null, opts)
             }
         }
     }
@@ -636,17 +751,21 @@ private fun SquareCropPreview(
 ) {
     val density = LocalDensity.current
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
-    var zoom by remember(bitmap) { mutableStateOf(1f) }
-    var offsetX by remember(bitmap) { mutableStateOf(0f) }
-    var offsetY by remember(bitmap) { mutableStateOf(0f) }
+    // 1f 表示"刚好覆盖容器短边"。允许在 [FIT_MIN, ZOOM_MAX] 之间调整：
+    //  < 1f 时图片不再覆盖整宽，可见到原图整体；
+    //  > 1f 时放大，并允许在边缘自由平移。
+    var zoom by remember(bitmap) { mutableFloatStateOf(1f) }
+    var offsetX by remember(bitmap) { mutableFloatStateOf(0f) }
+    var offsetY by remember(bitmap) { mutableFloatStateOf(0f) }
 
-    val baseScale = if (boxSize.width > 0 && boxSize.height > 0) {
+    // 起始 scale：让图片完全覆盖正方形容器（短边匹配到容器边）。
+    val fitScale = if (boxSize.width > 0 && boxSize.height > 0) {
         max(
             boxSize.width.toFloat() / bitmap.width.toFloat(),
             boxSize.height.toFloat() / bitmap.height.toFloat()
         )
     } else 1f
-    val actualScale = baseScale * zoom
+    val actualScale = fitScale * zoom
     val displayWidthPx = bitmap.width * actualScale
     val displayHeightPx = bitmap.height * actualScale
     val maxOffsetX = max(0f, (displayWidthPx - boxSize.width) / 2f)
@@ -661,10 +780,14 @@ private fun SquareCropPreview(
             val cropLeft = ((0f - imageLeft) / actualScale).roundToInt()
             val cropTop = ((0f - imageTop) / actualScale).roundToInt()
             val cropSize = (boxSize.width / actualScale).roundToInt()
+                .coerceAtMost(bitmap.width)
+                .coerceAtMost(bitmap.height)
+            val safeLeft = cropLeft.coerceIn(0, max(0, bitmap.width - cropSize))
+            val safeTop = cropTop.coerceIn(0, max(0, bitmap.height - cropSize))
             onCropChanged(
                 CoverCrop(
-                    left = cropLeft,
-                    top = cropTop,
+                    left = safeLeft,
+                    top = safeTop,
                     size = cropSize
                 )
             )
@@ -677,24 +800,52 @@ private fun SquareCropPreview(
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .onSizeChanged { boxSize = it }
-            .pointerInput(bitmap, boxSize) {
+            .pointerInput(bitmap) {
+                // 关键：fitScale 不放入 key，避免浮点抖动导致协程频繁重启、手势丢失；
+                // 每次回调实时读 boxSize State 重新算 fitScale 与 clamp，避免闭包捕获过期值。
                 detectTransformGestures { _, pan, gestureZoom, _ ->
-                    zoom = (zoom * gestureZoom).coerceIn(1f, 4f)
-                    offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
-                    offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
+                    val w = boxSize.width.toFloat()
+                    val h = boxSize.height.toFloat()
+                    if (w <= 0f || h <= 0f) return@detectTransformGestures
+                    val currentFit = max(w / bitmap.width, h / bitmap.height)
+                    val newZoom = (zoom * gestureZoom).coerceIn(FIT_MIN, ZOOM_MAX)
+                    val newActual = currentFit * newZoom
+                    val newDisplayW = bitmap.width * newActual
+                    val newDisplayH = bitmap.height * newActual
+                    val newMaxX = max(0f, (newDisplayW - w) / 2f)
+                    val newMaxY = max(0f, (newDisplayH - h) / 2f)
+                    // 当前帧 clamp 后的偏移：实时基于当前 offsetX/Y 重新 clamp（确保双指
+                    // 手势过程中即使 boxSize 变了 clamp 边界也是最新的）。
+                    val curClampedX = offsetX.coerceIn(-newMaxX, newMaxX)
+                    val curClampedY = offsetY.coerceIn(-newMaxY, newMaxY)
+                    val candidateX = curClampedX + pan.x
+                    val candidateY = curClampedY + pan.y
+                    zoom = newZoom
+                    offsetX = candidateX.coerceIn(-newMaxX, newMaxX)
+                    offsetY = candidateY.coerceIn(-newMaxY, newMaxY)
                 }
             },
         contentAlignment = Alignment.Center
     ) {
         if (boxSize.width > 0 && boxSize.height > 0) {
+            // 关键修复：之前用 ContentScale.FillBounds 配合 Modifier.size(width, height) 会
+            // 把非正方形图强行拉伸成方形，破坏原图比例（用户报告的"比例不对"）。
+            // 现在显式按比例计算显示宽高，再用 FillBounds 让 Bitmap 在该框内等比填充，
+            // 多余区域由父 Box 的 clip 裁掉——比例严格保留，同时手势/平移计算不受影响。
+            val aspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+            val (imageWp, imageHp) = if (aspectRatio >= 1f) {
+                displayWidthPx to (displayWidthPx / aspectRatio)
+            } else {
+                (displayHeightPx * aspectRatio) to displayHeightPx
+            }
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = null,
                 contentScale = ContentScale.FillBounds,
                 modifier = Modifier
                     .size(
-                        width = with(density) { displayWidthPx.toDp() },
-                        height = with(density) { displayHeightPx.toDp() }
+                        width = with(density) { imageWp.toDp() },
+                        height = with(density) { imageHp.toDp() }
                     )
                     .offset {
                         IntOffset(clampedOffsetX.roundToInt(), clampedOffsetY.roundToInt())
@@ -702,6 +853,23 @@ private fun SquareCropPreview(
             )
         }
     }
+}
+
+private const val FIT_MIN = 0.5f
+private const val ZOOM_MAX = 4f
+
+/**
+ * 选取合适的 inSampleSize，使解码后 bitmap 的最长边不小于 [targetMax]。
+ * 保证后续缩放/平移手势有足够精度，同时避免大原图占用过多内存。
+ */
+private fun computeInSampleSize(srcW: Int, srcH: Int, targetMax: Int): Int {
+    if (srcW <= 0 || srcH <= 0) return 1
+    val longest = maxOf(srcW, srcH)
+    var sample = 1
+    while (longest / (sample * 2) >= targetMax) {
+        sample *= 2
+    }
+    return sample
 }
 
 @Composable

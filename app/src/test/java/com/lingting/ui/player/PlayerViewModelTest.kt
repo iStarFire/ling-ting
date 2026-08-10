@@ -1,6 +1,7 @@
 package com.lingting.ui.player
 
 import com.lingting.data.model.Book
+import com.lingting.data.model.CoverCrop
 import com.lingting.data.model.Track
 import com.lingting.data.repository.BookRepository
 import com.lingting.data.repository.CoverRepository
@@ -28,6 +29,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when` as whenever
 import android.content.Context
+import android.net.Uri
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -439,6 +441,68 @@ class PlayerViewModelTest {
 
     // endregion
 
+    // region 封面搜刮候选：先搜索候选 → 选中 → 导入
+
+    @Test
+    fun searchDoubanCovers_populatesCandidates() = vmTest {
+        val book = book(1, "默认专辑名", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        val coverRepository = FakeCoverRepository(bookRepository)
+
+        vm = PlayerViewModel(bookRepository, player, playbackState, coverRepository)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.searchDoubanCovers("  自定义书名  ") // 应去掉首尾空格
+        runCurrent()
+
+        assertEquals("自定义书名", coverRepository.searchCalls.single())
+        assertEquals(listOf("http://x/1.jpg", "http://x/2.jpg", "http://x/3.jpg"), vm.uiState.value.doubanCovers)
+        assertFalse(vm.uiState.value.isCoverSearching)
+        // 仅搜索不落库
+        assertEquals("", vm.uiState.value.coverUrl)
+    }
+
+    @Test
+    fun searchDoubanCovers_fallsBackToTitle_whenQueryBlank() = vmTest {
+        val book = book(1, "默认专辑名", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        val coverRepository = FakeCoverRepository(bookRepository)
+
+        vm = PlayerViewModel(bookRepository, player, playbackState, coverRepository)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.searchDoubanCovers("   ")
+        runCurrent()
+
+        assertEquals("默认专辑名", coverRepository.searchCalls.single())
+    }
+
+    @Test
+    fun importDoubanCover_savesSelectedCandidate() = vmTest {
+        val book = book(1, "A", position = 0, duration = 0, 0, webdavUrl = "http://x/a.mp3")
+        whenever(bookRepository.getBookById(1)).thenReturn(book)
+        whenever(bookRepository.getTracks(1)).thenReturn(emptyList())
+        val coverRepository = FakeCoverRepository(bookRepository)
+
+        vm = PlayerViewModel(bookRepository, player, playbackState, coverRepository)
+        vm.initialize(1)
+        runCurrent()
+
+        vm.importDoubanCover("http://x/2.jpg", CoverCrop(left = 0, top = 0, size = 100))
+        runCurrent()
+
+        assertEquals("/covers/book_1.jpg", vm.uiState.value.coverUrl)
+        // 确认后清空候选，避免下次打开还残留
+        assertTrue(vm.uiState.value.doubanCovers.isEmpty())
+        assertNull(vm.uiState.value.coverError)
+    }
+
+    // endregion
+
     // region 睡眠定时：按时间/按集数 + 上次定时记忆
 
     @Test
@@ -671,9 +735,22 @@ private class FakeCoverRepository(
 ) : CoverRepository(mock(Context::class.java), bookRepository) {
     var lastQuery: String? = null
         private set
+    var searchCalls = mutableListOf<String>()
+        private set
 
     override suspend fun scrapeFromDouban(bookId: Long, title: String): Result<String> {
         lastQuery = title
         return Result.success("/covers/book_$bookId.jpg")
     }
+
+    override suspend fun searchDoubanCovers(title: String): Result<List<String>> {
+        searchCalls += title
+        return Result.success(listOf("http://x/1.jpg", "http://x/2.jpg", "http://x/3.jpg"))
+    }
+
+    override suspend fun downloadToTemp(imageUrl: String): Result<Uri> =
+        Result.success(Uri.parse("file:///tmp/$imageUrl"))
+
+    override suspend fun importDoubanCover(bookId: Long, imageUrl: String, crop: CoverCrop?): Result<String> =
+        Result.success("/covers/book_$bookId.jpg")
 }
