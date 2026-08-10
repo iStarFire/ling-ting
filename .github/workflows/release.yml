@@ -65,23 +65,20 @@ jobs:
           # 收集提交，过滤常见的 merge/CI 噪音
           COMMITS=$(git log --oneline --no-merges "${RANGE}" | grep -viE 'merge|release|ci\(|bump|chore\(release' || true)
 
-          BODY="## LingTing ${{ steps.version.outputs.version }}
+          {
+            echo "## LingTing ${{ steps.version.outputs.version }}"
+            echo ""
+            echo "自动构建并签名，可直接安装。"
+            echo ""
+            echo "### 本次更新"
+            echo ""
+            if [ -z "$COMMITS" ]; then
+              echo "- 无显著代码变更（可能仅版本号更新）。"
+            else
+              echo "$COMMITS" | sed 's/^/- /'
+            fi
+          } > changelog.md
 
-自动构建并签名，可直接安装。
-
-### 本次更新
-"
-          if [ -z "$COMMITS" ]; then
-            BODY="${BODY}
-- 无显著代码变更（可能仅版本号更新）。"
-          else
-            while IFS= read -r line; do
-              BODY="${BODY}
-- ${line}"
-            done <<< "$COMMITS"
-          fi
-
-          printf '%s\n' "$BODY" > changelog.md
           echo "released=${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
 
       - name: Rename APK with version
