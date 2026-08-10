@@ -1,10 +1,6 @@
 name: Build APK
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -27,7 +23,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # 规避仓库内 gradle.properties 里的本机 JDK 路径（org.gradle.java.home）
+      # 用环境变量覆盖为 CI 上的 JAVA_HOME
       - name: Build Debug APK
+        env:
+          ORG_GRADLE_PROJECT_org.gradle.java.home: ${{ env.JAVA_HOME }}
         run: ./gradlew assembleDebug
 
       - name: Upload Debug APK
@@ -37,6 +37,8 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
 
       - name: Build Release APK
+        env:
+          ORG_GRADLE_PROJECT_org.gradle.java.home: ${{ env.JAVA_HOME }}
         run: ./gradlew assembleRelease
 
       - name: Upload Release APK
