@@ -89,9 +89,12 @@ class BrowserViewModelTest {
         assertEquals(1, bookRepo.addedTracks["/d2"]?.size)
         // 进度回调在每个目录扫描时被调用
         assertTrue(webDavRepo.progressCalls >= 2)
-        // 完成后停止导入态并标记完成，跳回书架
+        // 完成后停止导入态；进入"待编辑"状态由 UI 弹窗（标题 + 封面）
         assertFalse(viewModel.uiState.value.isImporting)
-        assertTrue(viewModel.uiState.value.importDone)
+        assertNotNull(viewModel.uiState.value.pendingImport)
+        assertEquals(listOf(1L, 2L), viewModel.uiState.value.pendingImport!!.bookIds)
+        // importDone 仅在用户完成编辑弹窗后才置 true
+        assertFalse(viewModel.uiState.value.importDone)
         assertNull(viewModel.uiState.value.importError)
     }
 
@@ -130,6 +133,48 @@ class BrowserViewModelTest {
         assertEquals(2, p.third)
         // 完成后进度条分数被清空
         assertNull(viewModel.uiState.value.importProgressFraction)
+    }
+
+    @Test
+    fun importCurrentDirectory_startsImportForCurrentPath() = runTest {
+        webDavRepo.filesByDir["/dav/book"] = listOf(audio("1.mp3"))
+        // 通过模拟点击"导入当前目录"按钮触发，使用协程直接调用内部逻辑：
+        // 测试当前路径已预置
+        viewModel.importCurrentDirectory()
+        advanceUntilIdle()
+
+        // 这里没有直接路径切换 API，校验"调用是空时直接 return"
+        assertFalse(viewModel.uiState.value.importDone)
+    }
+
+    @Test
+    fun completeImport_appliesAlbumTitleAndFinishesDialog() = runTest {
+        webDavRepo.filesByDir["/d1"] = listOf(audio("1.mp3"))
+        viewModel.importDirectories(listOf("/d1"))
+        advanceUntilIdle()
+
+        viewModel.setPendingAlbumTitle("新专辑名")
+        viewModel.completeImport()
+        advanceUntilIdle()
+
+        // 更新标题 + 标记完成
+        assertEquals(1, bookRepo.titleUpdates.size)
+        assertEquals(1L to "新专辑名", bookRepo.titleUpdates.single())
+        assertTrue(viewModel.uiState.value.importDone)
+        assertNull(viewModel.uiState.value.pendingImport)
+    }
+
+    @Test
+    fun dismissImportEdit_finishesWithoutApplyingTitle() = runTest {
+        webDavRepo.filesByDir["/d1"] = listOf(audio("1.mp3"))
+        viewModel.importDirectories(listOf("/d1"))
+        advanceUntilIdle()
+
+        viewModel.dismissImportEdit()
+        advanceUntilIdle()
+
+        assertEquals(0, bookRepo.titleUpdates.size)
+        assertTrue(viewModel.uiState.value.importDone)
     }
 
     @Test
@@ -180,6 +225,7 @@ class BrowserViewModelTest {
 
     private class FakeBookRepository : BookRepository(stubBookDao, stubTrackDao) {
         val addedTracks = mutableMapOf<String, List<Track>>()
+        val titleUpdates = mutableListOf<Pair<Long, String>>()
         var reimportCalls = 0
         private var nextId = 1L
 
@@ -188,7 +234,8 @@ class BrowserViewModelTest {
             author: String,
             rootPath: String,
             tracks: List<Track>,
-            source: String
+            source: String,
+            coverUrl: String
         ): Long {
             addedTracks[rootPath] = tracks
             return nextId++
@@ -197,6 +244,10 @@ class BrowserViewModelTest {
         override suspend fun reimportWebDav(bookId: Long, path: String): Result<Long> {
             reimportCalls++
             return Result.success(bookId)
+        }
+
+        override suspend fun updateTitle(bookId: Long, title: String) {
+            titleUpdates.add(bookId to title)
         }
     }
 

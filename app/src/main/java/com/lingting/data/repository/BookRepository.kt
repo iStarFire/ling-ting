@@ -60,7 +60,8 @@ open class BookRepository @Inject constructor(
         author: String,
         rootPath: String,
         tracks: List<Track>,
-        source: String = SOURCE_WEBDAV
+        source: String = SOURCE_WEBDAV,
+        coverUrl: String = ""
     ): Long {
         bookDao.getBookByRootPath(rootPath)?.let { return it.id }
 
@@ -69,6 +70,7 @@ open class BookRepository @Inject constructor(
                 title = title,
                 author = author,
                 rootPath = rootPath,
+                coverUrl = coverUrl,
                 source = source,
                 currentTrackIndex = 0,
                 lastPlayedAt = System.currentTimeMillis()
@@ -164,6 +166,11 @@ open class BookRepository @Inject constructor(
 
     open suspend fun updateCover(bookId: Long, coverUrl: String) {
         bookDao.updateCover(bookId, coverUrl)
+    }
+
+    /** 更新书名（导入后批量重命名使用）。 */
+    open suspend fun updateTitle(bookId: Long, title: String) {
+        bookDao.updateTitle(bookId, title)
     }
 
     /**

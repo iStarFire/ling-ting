@@ -1,11 +1,20 @@
 package com.lingting.ui.browser
 
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -13,11 +22,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lingting.data.model.CoverCrop
 import com.lingting.data.model.WebDavFile
 import kotlinx.coroutines.launch
 
@@ -33,6 +48,13 @@ fun BrowserScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // 导入编辑弹窗：选封面后弹裁剪 sheet，所需 Uri 在此 state
+    var pendingCropUri by remember { mutableStateOf<Uri?>(null) }
+    // 本地选图启动器（与 CoverCropSheet 接驳）
+    val localCoverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) pendingCropUri = uri
+    }
 
     // 进入重新导入模式：定位到既有书籍路径
     LaunchedEffect(reimportBookId) {
@@ -61,13 +83,15 @@ fun BrowserScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    // 只显示当前文件夹名，完整路径噪音大
+                    // 完整路径显示（不再是只最后一段）；过长时按字符数截断并保留前缀+省略号+末尾
                     Text(
                         text = when {
                             state.isReimportMode -> "重新导入"
                             state.selectedPaths.isNotEmpty() -> "已选择 ${state.selectedPaths.size} 个目录"
-                            else -> state.currentPath.trimEnd('/').substringAfterLast('/').ifEmpty { "网盘文件" }
+                            else -> formatPathForTitle(state.currentPath)
                         },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -89,7 +113,6 @@ fun BrowserScreen(
                 },
                 actions = {
                     if (state.isReimportMode) {
-                        // 重新导入模式：以当前目录刷新既有书籍
                         Button(
                             onClick = { viewModel.reimportCurrentDirectory() },
                             enabled = !state.isImporting
@@ -97,14 +120,19 @@ fun BrowserScreen(
                             Text("重新导入")
                         }
                     } else if (state.selectedPaths.isEmpty()) {
-                        // 非选择模式：仅提供"回到根目录"
+                        // 非选择模式：根目录 home + 直接导入当前目录快捷按钮
                         if (state.currentPath != "/") {
                             IconButton(onClick = { viewModel.navigateToRoot() }) {
-                                Icon(Icons.Default.Home, contentDescription = "根目录")
+                                Icon(Icons.Default.Home, contentDescription = "回到根目录")
+                            }
+                            IconButton(
+                                onClick = { viewModel.importCurrentDirectory() },
+                                enabled = !state.isImporting
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = "导入当前目录")
                             }
                         }
                     } else {
-                        // 选择模式：右侧出现"导入"按钮（选中目录数量）
                         Button(
                             onClick = { scope.launch { viewModel.importDirectories(state.selectedPaths.toList()) } },
                             enabled = !state.isImporting
@@ -263,6 +291,34 @@ fun BrowserScreen(
                     }
                 }
             }
+
+            // 导入完成后弹窗：修改专辑名 + 设置封面
+            state.pendingImport?.let { pending ->
+                ImportEditSheet(
+                    pending = pending,
+                    coverUri = state.pendingImportCoverUri,
+                    isCoverUpdating = state.isCoverUpdating,
+                    onAlbumTitleChange = viewModel::setPendingAlbumTitle,
+                    onPickFromLocal = {
+                        localCoverPicker.launch("image/*")
+                    },
+                    onComplete = viewModel::completeImport,
+                    onDismiss = viewModel::dismissImportEdit
+                )
+            }
+
+            // 选完本地图片后让用户裁剪（与 CoverCropSheet 的 CropSheet 接驳）
+            pendingCropUri?.let { uri ->
+                BrowserCoverCropSheet(
+                    uri = uri,
+                    isSaving = state.isCoverUpdating,
+                    onConfirm = { crop ->
+                        viewModel.applyPendingLocalCover(uri, crop)
+                        pendingCropUri = null
+                    },
+                    onDismiss = { pendingCropUri = null }
+                )
+            }
         }
     }
 }
@@ -323,5 +379,145 @@ private fun formatFileSize(bytes: Long): String {
         bytes < 1024 * 1024 -> "${bytes / 1024} KB"
         bytes < 1024 * 1024 * 1024 -> "${"%.1f".format(bytes.toDouble() / (1024 * 1024))} MB"
         else -> "${"%.2f".format(bytes.toDouble() / (1024 * 1024 * 1024))} GB"
+    }
+}
+
+/**
+ * 把完整路径格式化为 TopBar 标题：根目录显示 /，普通路径保留完整分段，
+ * 过长时取首段 + 省略 + 末段，避免噪音掩盖可读信息。
+ */
+private fun formatPathForTitle(path: String): String {
+    val trimmed = path.trimEnd('/').ifEmpty { "/" }
+    if (trimmed == "/") return "/"
+    val max = 36
+    return if (trimmed.length <= max) trimmed
+    else {
+        val parts = trimmed.split('/').filter { it.isNotEmpty() }
+        if (parts.size >= 2) {
+            val head = parts.first()
+            val tail = parts.last()
+            "/$head/…/$tail"
+        } else {
+            "…${trimmed.takeLast(max - 1)}"
+        }
+    }
+}
+
+/**
+ * 导入完成后弹出的编辑 sheet：
+ *   1. 修改专辑名称（默认使用导入目录的 dirname，可改）
+ *   2. 设置封面（从本地相册挑选 → 自动进入裁剪；搜刮为辅助入口）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ImportEditSheet(
+    pending: PendingImport,
+    coverUri: String?,
+    isCoverUpdating: Boolean,
+    onAlbumTitleChange: (String) -> Unit,
+    onPickFromLocal: () -> Unit,
+    onComplete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "导入成功 · 共 ${pending.bookIds.size} 本",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = "① 专辑名称（默认 ${pending.defaultAlbumTitle}）",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = pending.albumTitle,
+                onValueChange = onAlbumTitleChange,
+                label = { Text("专辑名称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = "② 封面（选本地图片，自动进入裁剪）",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (coverUri.isNullOrBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .size(88.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Image,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // 缩略图从本地 Uri 异步解码
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val bitmap by produceState<Bitmap?>(initialValue = null, coverUri) {
+                        value = runCatching {
+                            ctx.contentResolver.openInputStream(Uri.parse(coverUri))?.use { input ->
+                                android.graphics.BitmapFactory.decodeStream(input)
+                            }
+                        }.getOrNull()
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(88.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap!!.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                }
+                TextButton(onClick = onPickFromLocal, enabled = !isCoverUpdating) {
+                    Icon(Icons.Default.Image, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("选择本地图片")
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss, enabled = !isCoverUpdating) {
+                    Text("跳过")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(onClick = onComplete, enabled = !isCoverUpdating) {
+                    Text("完成")
+                }
+            }
+        }
     }
 }
